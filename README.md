@@ -2,6 +2,10 @@
 
 Editor 3D no navegador focado no fluxo **CorelDRAW → SVG → GLB**, com suporte adicional para imagens, PDF, DXF, texto 3D e modelagem geométrica.
 
+## Abrir online
+
+**GitHub Pages:** https://wallissonghost-code.github.io/COREL-3D-GLB/
+
 ## V8 — principais recursos
 
 ### Importação
@@ -67,7 +71,7 @@ Editor 3D no navegador focado no fluxo **CorelDRAW → SVG → GLB**, com suport
 - desfazer / refazer
 
 ## Como usar
-Abra `index.html` em um navegador moderno com internet. O projeto carrega Three.js e bibliotecas auxiliares por CDN.
+Abra o link do GitHub Pages ou `index.html` em um navegador moderno com internet. O projeto carrega Three.js e bibliotecas auxiliares por CDN.
 
 ## Limitações atuais
 - `.CDR` direto ainda não é aberto pelo navegador; use **CorelDRAW → SVG** para maior fidelidade.
