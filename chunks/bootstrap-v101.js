@@ -15,12 +15,13 @@ const files = [
   'app-v101-part6.txt',
   'app-v1032-viewfix.txt',
   'app-v104-agent.txt',
-  'app-v105-multiselect.txt'
+  'app-v105-multiselect.txt',
+  'app-v106-drag-delete.txt'
 ];
 
 try {
   const code = (await Promise.all(files.map(async name => {
-    const url = new URL(`${name}?v=109`, import.meta.url);
+    const url = new URL(`${name}?v=110`, import.meta.url);
     const response = await fetch(url, { cache: 'no-store' });
     if (!response.ok) throw new Error(`Falha ao carregar ${url.pathname}: HTTP ${response.status}`);
     return await response.text();
