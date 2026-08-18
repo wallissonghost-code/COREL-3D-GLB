@@ -1,5 +1,195 @@
 $('color').addEventListener('input', applyMaterial); $('finish').addEventListener('change', applyMaterial); ['brushSize','brushStrength','brushSpacing','brushFalloff'].forEach(id=>$(id).addEventListener('input', updateBrushUi)); $('symXBtn').addEventListener('click', ()=>{ symmetry.x=!symmetry.x; updateBrushUi(); }); $('symYBtn').addEventListener('click', ()=>{ symmetry.y=!symmetry.y; updateBrushUi(); }); $('symZBtn').addEventListener('click', ()=>{ symmetry.z=!symmetry.z; updateBrushUi(); }); $('maskPaintBtn').addEventListener('click', ()=>{ maskMode = maskMode==='paint' ? 'none' : 'paint'; updateBrushUi(); setStatus(maskMode==='paint'?'Modo pintar máscara ativado.':'Pintura de máscara desativada.','warn'); }); $('maskEraseBtn').addEventListener('click', ()=>{ maskMode = maskMode==='erase' ? 'none' : 'erase'; updateBrushUi(); setStatus(maskMode==='erase'?'Modo apagar máscara ativado.':'Apagar máscara desativado.','warn'); });
 $('exportBtn').addEventListener('click', ()=>{ const mesh=currentMesh(); if(!mesh) return; const exporter=new GLTFExporter(); setStatus('Gerando GLB da camada selecionada...'); exporter.parse(mesh, res=>{ const blob=new Blob([res],{type:'model/gltf-binary'}); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='modelo-esculpido-v10.glb'; a.click(); setTimeout(()=>URL.revokeObjectURL(a.href),1000); setStatus('GLB exportado com sucesso.', 'ok'); }, err=>{ console.error(err); setStatus('Erro ao exportar GLB.', 'error'); }, {binary:true, trs:false, onlyVisible:true}); }); $('exportAllBtn').addEventListener('click', exportAllVisible);
 
+// V10.2 — CORTE PLANO / FRESA
+let cutEnabled = false;
+let cutDragging = false;
+let cutStroke = null;
+let cutPreview = null;
+
+function installFlatCutterUI(){
+  const sidebar = document.querySelector('.sidebar');
+  if(!sidebar || document.getElementById('toggleCutBtn')) return;
+  const section = document.createElement('div');
+  section.className = 'section';
+  section.innerHTML = `
+    <div class="section-title">CORTE PLANO / FRESA</div>
+    <div class="field"><label>Status do corte</label><div id="cutStatus" class="value">Pronto para selecionar uma peça</div><div class="hintlabel">Remove material com fundo plano e profundidade travada. Ideal para portas, janelas, encaixes e relevos negativos.</div></div>
+    <div class="row">
+      <button id="toggleCutBtn" class="ok">Ativar corte plano</button>
+      <button id="undoCutBtn" class="secondary">Desfazer corte</button>
+    </div>
+    <div class="field" style="margin-top:10px"><label>Formato</label><select id="cutShape"><option value="rect" selected>Retângulo</option><option value="circle">Círculo</option></select></div>
+    <div class="field"><label>Largura <span id="cutWidthV" class="value">0.80</span></label><input id="cutWidth" type="range" min="0.10" max="2.50" value="0.80" step="0.05"></div>
+    <div class="field"><label>Altura <span id="cutHeightV" class="value">1.20</span></label><input id="cutHeight" type="range" min="0.10" max="2.50" value="1.20" step="0.05"></div>
+    <div class="field"><label>Profundidade exata <span id="cutDepthV" class="value">0.25</span></label><input id="cutDepth" type="range" min="0.02" max="1.20" value="0.25" step="0.01"><div class="hintlabel">Todo o traço fica na mesma profundidade. Não há falloff nem arredondamento no fundo.</div></div>
+    <div class="hintlabel">Clique e arraste sobre uma face do modelo. Para bordas mais retas, use <b>Mais detalhe</b> antes de cortar.</div>
+  `;
+  const sculptTitle = [...document.querySelectorAll('.section-title')].find(el=>el.textContent.includes('PINCEL 3D'));
+  if(sculptTitle && sculptTitle.parentElement) sculptTitle.parentElement.before(section); else sidebar.appendChild(section);
+
+  $('toggleCutBtn').addEventListener('click', ()=>{
+    const part = currentPart();
+    if(!part || !part.visible || part.locked){ setStatus('Selecione uma camada visível e desbloqueada para cortar.', 'error'); return; }
+    cutEnabled = !cutEnabled;
+    if(cutEnabled){
+      sculptEnabled = false;
+      maskMode = 'none';
+      controls.enabled = true;
+      setStatus('Corte plano ativo • clique e arraste para fresar com profundidade uniforme.', 'ok');
+    } else {
+      hideCutPreview();
+      setStatus('Corte plano desativado.', 'ok');
+    }
+    updateCutUi();
+    refreshUi();
+  });
+  $('undoCutBtn').addEventListener('click', ()=>{ undoStroke(); updateCutUi(); });
+  ['cutWidth','cutHeight','cutDepth'].forEach(id=>$(id).addEventListener('input', updateCutUi));
+  $('cutShape').addEventListener('change', updateCutUi);
+  updateCutUi();
+}
+
+function updateCutUi(){
+  if(!$('toggleCutBtn')) return;
+  $('cutWidthV').textContent = (+$('cutWidth').value).toFixed(2);
+  $('cutHeightV').textContent = (+$('cutHeight').value).toFixed(2);
+  $('cutDepthV').textContent = (+$('cutDepth').value).toFixed(2);
+  $('toggleCutBtn').textContent = cutEnabled ? 'Desativar corte plano' : 'Ativar corte plano';
+  $('toggleCutBtn').className = cutEnabled ? 'warn' : 'ok';
+  const p = currentPart();
+  $('cutStatus').textContent = !p ? 'Selecione ou crie uma peça' : p.locked ? 'Camada bloqueada' : cutEnabled ? 'Fresa ativa ✓' : 'Pronto para cortar';
+  if($('cutHeight')) $('cutHeight').disabled = $('cutShape').value === 'circle';
+}
+
+function cutterBasis(normal){
+  const n = normal.clone().normalize();
+  const ref = Math.abs(n.z) < 0.85 ? new THREE.Vector3(0,0,1) : new THREE.Vector3(0,1,0);
+  const u = new THREE.Vector3().crossVectors(ref,n).normalize();
+  const v = new THREE.Vector3().crossVectors(n,u).normalize();
+  return {n,u,v};
+}
+
+function hideCutPreview(){
+  if(cutPreview){ if(cutPreview.parent) cutPreview.parent.remove(cutPreview); cutPreview.geometry.dispose(); cutPreview.material.dispose(); cutPreview=null; }
+}
+
+function showCutPreview(hit){
+  const mesh = currentMesh(); if(!mesh || !hit) return;
+  hideCutPreview();
+  const center = mesh.worldToLocal(hit.point.clone());
+  const {n,u,v} = cutterBasis(hit.face.normal);
+  const w = +$('cutWidth').value, h = +$('cutHeight').value;
+  const pts=[];
+  if($('cutShape').value==='circle'){
+    const r=w*0.5;
+    for(let i=0;i<48;i++){ const a=i/48*Math.PI*2; pts.push(center.clone().addScaledVector(u,Math.cos(a)*r).addScaledVector(v,Math.sin(a)*r).addScaledVector(n,0.006)); }
+  } else {
+    const hw=w*0.5, hh=h*0.5;
+    pts.push(
+      center.clone().addScaledVector(u,-hw).addScaledVector(v,-hh).addScaledVector(n,0.006),
+      center.clone().addScaledVector(u, hw).addScaledVector(v,-hh).addScaledVector(n,0.006),
+      center.clone().addScaledVector(u, hw).addScaledVector(v, hh).addScaledVector(n,0.006),
+      center.clone().addScaledVector(u,-hw).addScaledVector(v, hh).addScaledVector(n,0.006)
+    );
+  }
+  const g=new THREE.BufferGeometry().setFromPoints(pts);
+  cutPreview=new THREE.LineLoop(g,new THREE.LineBasicMaterial({color:0xffa640,depthTest:false,transparent:true,opacity:0.95}));
+  cutPreview.renderOrder=999;
+  mesh.add(cutPreview);
+}
+
+function flatCutStamp(center, stroke){
+  const mesh=currentMesh(); if(!mesh || !stroke) return;
+  const geom=mesh.geometry, pos=geom.attributes.position, arr=pos.array;
+  const mask=geom.userData.mask || new Float32Array(pos.count);
+  const w=+$('cutWidth').value, h=+$('cutHeight').value, depth=+$('cutDepth').value;
+  const shape=$('cutShape').value, hw=w*0.5, hh=h*0.5;
+  const eps=Math.max(0.025,depth*0.12);
+  let changed=0;
+  for(let i=0;i<pos.count;i++){
+    if(mask[i]>0.5) continue;
+    const vtx=new THREE.Vector3(arr[i*3],arr[i*3+1],arr[i*3+2]);
+    const d=vtx.clone().sub(center);
+    const du=d.dot(stroke.u), dv=d.dot(stroke.v);
+    const inside = shape==='circle' ? (du*du+dv*dv <= hw*hw) : (Math.abs(du)<=hw && Math.abs(dv)<=hh);
+    if(!inside) continue;
+    const planeCoord=vtx.dot(stroke.n);
+    // Só altera a casca atingida, nunca atravessa a peça inteira.
+    if(planeCoord < stroke.targetC-eps || planeCoord > stroke.baseC+eps) continue;
+    const shift=stroke.targetC-planeCoord;
+    vtx.addScaledVector(stroke.n,shift);
+    arr[i*3]=vtx.x; arr[i*3+1]=vtx.y; arr[i*3+2]=vtx.z;
+    changed++;
+  }
+  if(changed){
+    pos.needsUpdate=true;
+    geom.computeVertexNormals();
+    geom.computeBoundingBox();
+    geom.computeBoundingSphere();
+  }
+  return changed;
+}
+
+function beginFlatCut(hit,e){
+  const mesh=currentMesh(); if(!mesh || !hit) return false;
+  pushUndo();
+  const origin=mesh.worldToLocal(hit.point.clone());
+  const basis=cutterBasis(hit.face.normal);
+  const depth=+$('cutDepth').value;
+  const baseC=origin.dot(basis.n);
+  cutStroke={...basis,baseC,targetC:baseC-depth,lastCenter:origin.clone()};
+  cutDragging=true;
+  const changed=flatCutStamp(origin,cutStroke);
+  try{ renderer.domElement.setPointerCapture(e.pointerId); }catch(_){}
+  setStatus(changed ? 'Cortando • fundo plano travado na profundidade escolhida.' : 'Nenhum vértice dentro do corte. Use Mais detalhe para aumentar a malha.', changed?'ok':'warn');
+  return true;
+}
+
+function continueFlatCut(hit){
+  if(!cutDragging || !cutStroke || !hit) return;
+  const mesh=currentMesh();
+  let center=mesh.worldToLocal(hit.point.clone());
+  // Projeta o cursor de volta ao plano inicial: a profundidade não acumula durante o arrasto.
+  const dc=center.dot(cutStroke.n)-cutStroke.baseC;
+  center.addScaledVector(cutStroke.n,-dc);
+  const spacing=Math.max(0.04,Math.min(+$('cutWidth').value,+$('cutHeight').value)*0.22);
+  if(center.distanceTo(cutStroke.lastCenter)<spacing) return;
+  const dist=center.distanceTo(cutStroke.lastCenter);
+  const steps=Math.max(1,Math.ceil(dist/spacing));
+  const start=cutStroke.lastCenter.clone();
+  for(let s=1;s<=steps;s++) flatCutStamp(start.clone().lerp(center,s/steps),cutStroke);
+  cutStroke.lastCenter.copy(center);
+}
+
+// Captura antes dos listeners do pincel normal. Quando a fresa está ligada, ela é a ferramenta exclusiva do clique esquerdo.
+renderer.domElement.addEventListener('pointerdown', e=>{
+  if(!cutEnabled || e.button!==0) return;
+  e.preventDefault(); e.stopImmediatePropagation();
+  const p=currentPart();
+  if(!p || !p.visible || p.locked){ setStatus('A camada precisa estar visível e desbloqueada.', 'error'); return; }
+  const hit=intersectSelected(e);
+  if(hit) beginFlatCut(hit,e); else setStatus('Clique diretamente sobre a superfície que deseja cortar.', 'warn');
+}, true);
+
+renderer.domElement.addEventListener('pointermove', e=>{
+  if(!cutEnabled) return;
+  e.stopImmediatePropagation();
+  const hit=intersectSelected(e);
+  if(hit){ showCutPreview(hit); if(cutDragging) continueFlatCut(hit); } else hideCutPreview();
+}, true);
+
+window.addEventListener('pointerup', e=>{
+  if(!cutEnabled || !cutDragging) return;
+  cutDragging=false;
+  cutStroke=null;
+  updateTriCount();
+  setStatus('Corte plano concluído • profundidade uniforme mantida.', 'ok');
+}, true);
+
+installFlatCutterUI();
+document.title='COREL 3D GLB Studio V10.2 — Corte Plano';
+const versionSmall=document.querySelector('.brand small'); if(versionSmall) versionSmall.textContent='V10.2 • corte plano / fresa uniforme';
+
 function animate(){ requestAnimationFrame(animate); controls.update(); renderer.render(scene,camera); }
-renderLayerList(); updateBrushUi(); refreshUi(); syncTransformFields(); animate();
+renderLayerList(); updateBrushUi(); refreshUi(); syncTransformFields(); updateCutUi(); animate();
