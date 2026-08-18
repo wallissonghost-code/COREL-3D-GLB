@@ -1,0 +1,76 @@
+// V10.3.2 — VISUALIZADOR GLB RETO / MODELO INTEIRO
+function getGlbViewBox(){
+  const glbParts=parts.filter(p=>p.visible && p.type==='glb');
+  if(!glbParts.length) return null;
+  const box=new THREE.Box3();
+  glbParts.forEach(p=>box.expandByObject(p.mesh));
+  return box;
+}
+
+function frameBoxLevel(box, view='front'){
+  if(!box || box.isEmpty()) return;
+  const size=box.getSize(new THREE.Vector3());
+  const center=box.getCenter(new THREE.Vector3());
+  let dir,up,viewW,viewH,depth;
+
+  if(view==='top'){
+    dir=new THREE.Vector3(0,1,0);
+    up=new THREE.Vector3(0,0,-1);
+    viewW=Math.max(size.x,0.01); viewH=Math.max(size.z,0.01); depth=Math.max(size.y,0.01);
+  } else if(view==='right'){
+    dir=new THREE.Vector3(1,0,0);
+    up=new THREE.Vector3(0,1,0);
+    viewW=Math.max(size.z,0.01); viewH=Math.max(size.y,0.01); depth=Math.max(size.x,0.01);
+  } else {
+    // GLB normalmente usa Y para cima. Frente pelo eixo Z mantém chão/horizonte retos.
+    dir=new THREE.Vector3(0,0,1);
+    up=new THREE.Vector3(0,1,0);
+    viewW=Math.max(size.x,0.01); viewH=Math.max(size.y,0.01); depth=Math.max(size.z,0.01);
+  }
+
+  const vFov=THREE.MathUtils.degToRad(camera.fov);
+  const aspect=Math.max(camera.aspect||1,0.1);
+  const hFov=2*Math.atan(Math.tan(vFov/2)*aspect);
+  const distV=(viewH/2)/Math.tan(vFov/2);
+  const distH=(viewW/2)/Math.tan(hFov/2);
+  const dist=Math.max(distV,distH)*1.22 + depth*0.55;
+
+  camera.up.copy(up);
+  camera.position.copy(center).addScaledVector(dir,dist);
+  controls.target.copy(center);
+  camera.lookAt(center);
+  camera.updateProjectionMatrix();
+  controls.update();
+}
+
+fitCameraToSelection=function(){
+  const part=currentPart();
+  if(!part) return;
+  if(part.type==='glb'){
+    frameBoxLevel(getGlbViewBox(),'front');
+    return;
+  }
+  const box=new THREE.Box3().setFromObject(part.mesh);
+  frameBoxLevel(box,'front');
+};
+
+function installViewButtons(){
+  if(document.getElementById('viewFrontBtn')) return;
+  const stageEl=document.getElementById('stage');
+  if(!stageEl) return;
+  const bar=document.createElement('div');
+  bar.id='viewBar';
+  bar.style.cssText='position:absolute;left:50%;top:62px;transform:translateX(-50%);z-index:8;display:flex;gap:6px;flex-wrap:wrap;justify-content:center;max-width:94%;';
+  bar.innerHTML='<button id="viewFrontBtn" class="secondary" style="padding:8px 10px">Frente</button><button id="viewTopBtn" class="secondary" style="padding:8px 10px">Topo</button><button id="viewRightBtn" class="secondary" style="padding:8px 10px">Lateral</button><button id="viewAllBtn" class="primary" style="padding:8px 10px">Enquadrar tudo</button>';
+  stageEl.appendChild(bar);
+  const boxForView=()=>getGlbViewBox() || (currentMesh()?new THREE.Box3().setFromObject(currentMesh()):null);
+  document.getElementById('viewFrontBtn').onclick=()=>frameBoxLevel(boxForView(),'front');
+  document.getElementById('viewTopBtn').onclick=()=>frameBoxLevel(boxForView(),'top');
+  document.getElementById('viewRightBtn').onclick=()=>frameBoxLevel(boxForView(),'right');
+  document.getElementById('viewAllBtn').onclick=()=>frameBoxLevel(boxForView(),'front');
+}
+
+installViewButtons();
+const brandVersion=document.querySelector('.brand small');
+if(brandVersion) brandVersion.textContent='V10.3.2 • GLB inteiro + vistas retas';
+document.title='COREL 3D GLB Studio V10.3.2 — Visualizador Reto';
