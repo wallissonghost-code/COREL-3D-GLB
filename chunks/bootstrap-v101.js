@@ -1,0 +1,10 @@
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
+import { SVGLoader } from 'three/addons/loaders/SVGLoader.js';
+import { FontLoader } from 'three/addons/loaders/FontLoader.js';
+import { TextGeometry } from 'three/addons/geometries/TextGeometry.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+const files=['app-v101-part1.txt?v=101','app-v101-part2.txt?v=101','app-v101-part3.txt?v=101','app-v101-part4.txt?v=101','app-v101-part5.txt?v=101','app-v101-part6.txt?v=101'];
+const code=(await Promise.all(files.map(async f=>{const r=await fetch(f,{cache:'no-store'});if(!r.ok)throw new Error('Falha ao carregar '+f);return await r.text()}))).join('\n');
+eval(code);
