@@ -1,17 +1,149 @@
-<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>COREL 3D GLB Studio V9.6</title><link rel="stylesheet" href="style.css?v=96"></head><body>
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>COREL 3D GLB Studio V10.1 — Pincel Corrigido</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style-v101.css?v=101">
+</head>
+<body>
 <div class="app">
-<aside class="panel left"><header><b>COREL 3D GLB</b><small>V9.6 • pincel sempre visível</small></header><div id="engine" class="engine">MOTOR 3D CARREGANDO...</div>
-<label class="drop">Importar SVG / PNG / JPG<input id="file" type="file" accept=".svg,image/*,.json"></label><div id="status">Inicializando...</div>
-<section><h3>PROJETO EDITÁVEL</h3><div class="grid2"><button id="saveProject" class="primary" title="Salva todas as camadas e propriedades para continuar editando depois">💾 Salvar para continuar</button><button id="openProject" title="Abre um projeto .json salvo anteriormente e continua a edição">📂 Abrir projeto salvo</button></div><small class="sub">Salva camadas, posição, rotação, escala, cor, material, profundidade, bevel, visibilidade e bloqueios.</small></section>
-<section><h3>HISTÓRICO</h3><div class="grid3"><button id="undo">↶ Desfazer</button><button id="redo">↷ Refazer</button><button id="deleteQuick">Excluir</button></div><small class="sub">Ctrl+Z desfaz • Ctrl+Y ou Ctrl+Shift+Z refaz • Delete exclui</small></section>
-<section><h3>TEXTO 3D</h3><input id="textInput" value="Ghost 3D"><div class="grid3 labeled"><label><span>Tamanho</span><input id="textSize" type="number" value="28"><small>altura do texto</small></label><label><span>Profundidade</span><input id="textDepth" type="number" value="8"><small>espessura 3D</small></label><label><span>Cor</span><input id="textColor" type="color" value="#ffd700"><small>cor do texto</small></label></div><button id="addText">Criar texto</button></section>
-<section><h3>FORMAS GEOMÉTRICAS</h3><select id="shapeMode"><option value="2d">2D extrudada</option><option value="3d">3D pronta</option></select><select id="shape2d"><option value="rect">Retângulo</option><option value="round">Retângulo arredondado</option><option value="square">Quadrado</option><option value="circle">Círculo</option><option value="ellipse">Elipse</option><option value="triangle">Triângulo</option><option value="diamond">Losango</option><option value="pentagon">Pentágono</option><option value="hexagon">Hexágono</option><option value="octagon">Octógono</option><option value="star">Estrela</option><option value="arrow">Seta</option></select><select id="shape3d"><option value="box">Caixa</option><option value="sphere">Esfera</option><option value="cylinder">Cilindro</option><option value="cone">Cone</option><option value="pyramid">Pirâmide</option><option value="torus">Toro</option></select>
-<div class="grid3 labeled"><label><span>Largura</span><input id="sw" type="number" value="40"><small>tamanho no eixo X</small></label><label><span>Altura</span><input id="sh" type="number" value="25"><small>tamanho no eixo Y</small></label><label><span>Profundidade</span><input id="sd" type="number" value="8"><small>espessura no eixo Z</small></label></div>
-<div class="grid3 labeled"><label><span>Raio</span><input id="sr" type="number" value="16"><small>círculos/esferas</small></label><label><span>Lados</span><input id="ssides" type="number" value="6"><small>polígonos/estrelas</small></label><label><span>Cor</span><input id="scolor" type="color" value="#775cff"><small>cor da nova forma</small></label></div><button id="addShape" class="primary">Adicionar forma</button></section>
-<section><h3>CAMADAS <span id="count">0</span></h3><small class="sub">◉ mostra/oculta a camada • 🔓 permite editar • 🔒 bloqueia contra alterações</small><div id="layers"></div></section>
-<section><h3>MODELAGEM</h3><div class="grid3"><button id="mx">Espelhar X</button><button id="my">Espelhar Y</button><button id="mz">Espelhar Z</button></div><div class="grid2"><button id="center">Centralizar</button><button id="ground">No chão</button></div><div class="grid2"><button id="relief">Relevo +2</button><button id="basrelief">Baixo -2</button></div></section>
-<section><h3>EXPORTAÇÃO FINAL</h3><div class="grid2"><button id="exportOne">GLB peça</button><button id="exportAll" class="primary">GLB completo</button><button id="snapshot">Preview PNG</button></div></section></aside>
-<main id="stage"><div class="hud"><span id="fileName">Novo projeto</span><span id="stats">0 triângulos</span></div><div class="hint">Botão direito: rotação 3D • Scroll: zoom • Clique esquerdo: selecionar • Centro fixo</div></main>
-<aside class="panel right"><section><h3>PEÇA SELECIONADA</h3><div id="selected">Nenhuma</div><label class="field-block"><span>Nome da camada</span><input id="name" placeholder="Nome"><small>nome exibido na lista de camadas</small></label><label class="field-block"><span>Profundidade / espessura</span><input id="depth" type="range" min=".5" max="120" step=".5" value="10"><small>espessura da forma 2D/texto</small></label><label class="field-block"><span>Bevel / arredondamento</span><input id="bevel" type="range" min="0" max="15" step=".25" value="1"><small>arredonda as bordas</small></label><div class="group-title">POSIÇÃO</div><div class="grid3 labeled"><label><span>X</span><input id="px" type="number" step=".1"><small>esq./dir.</small></label><label><span>Y</span><input id="py" type="number" step=".1"><small>frente/trás</small></label><label><span>Z</span><input id="pz" type="number" step=".1"><small>cima/baixo</small></label></div><div class="group-title">ROTAÇÃO EM GRAUS</div><div class="grid3 labeled"><label><span>Rot. X</span><input id="rx" type="number" step="1"></label><label><span>Rot. Y</span><input id="ry" type="number" step="1"></label><label><span>Rot. Z</span><input id="rz" type="number" step="1"></label></div><div class="group-title">ESCALA</div><div class="grid3 labeled"><label><span>Esc. X</span><input id="sx" type="number" step=".05"></label><label><span>Esc. Y</span><input id="sy" type="number" step=".05"></label><label><span>Esc. Z</span><input id="sz" type="number" step=".05"></label></div><div class="grid2 labeled"><label><span>Cor</span><input id="color" type="color"></label><label><span>Material</span><select id="finish"><option value="matte">Fosco</option><option value="gloss">Brilhante</option><option value="metal">Metal</option><option value="plastic">Plástico</option><option value="gold">Ouro</option><option value="chrome">Cromado</option></select></label></div><div class="grid3"><button id="move">Mover</button><button id="rotate">Rotacionar</button><button id="scale">Escalar</button></div><div class="grid2"><button id="duplicate">Duplicar</button><button id="delete">Excluir</button></div></section><section><h3>AMBIENTE</h3><label class="field-block"><span>Fundo da visualização</span><select id="bg"><option value="dark">Escuro</option><option value="gray">Cinza</option><option value="white">Branco</option><option value="blue">Azul</option></select></label><label class="checkline"><input id="autorotate" type="checkbox"><span>Auto-rotação</span></label></section></aside>
+  <aside class="sidebar">
+    <div class="brand"><div class="logo">3D</div><div><h1>COREL 3D</h1><small>V10.1 • pincel corrigido e mais forte</small></div></div>
+    <div id="status" class="status">Agora com PNG/JPG em relevo, GLB completo, duplicar, renomear e transformar camadas.</div>
+
+    <div class="section">
+      <div class="section-title">PROJETO EDITÁVEL</div>
+      <div class="row">
+        <button id="saveProjectBtn" class="primary">Salvar projeto</button>
+        <button id="loadProjectBtn" class="secondary">Abrir projeto</button>
+      </div>
+      <div class="hintlabel">Salva tudo para continuar depois: camadas, máscara, posição, material e escultura.</div>
+      <input id="projectInput" type="file" accept=".json,application/json">
+    </div>
+
+    <div class="section">
+      <div class="section-title">IMPORTAR / CRIAR</div>
+      <div class="row3">
+        <button id="addSphereBtn" class="primary">Esfera</button>
+        <button id="addCubeBtn" class="secondary">Cubo</button>
+        <button id="addCylinderBtn" class="secondary">Cilindro</button>
+      </div>
+      <div class="row" style="margin-top:10px">
+        <button id="importSvgBtn" class="secondary">Importar SVG</button>
+        <button id="createTextBtn" class="secondary">Criar texto 3D</button>
+      </div>
+      <div class="row" style="margin-top:10px">
+        <button id="importImageBtn" class="secondary">Importar PNG/JPG</button>
+        <button id="duplicateLayerBtn" class="secondary" disabled>Duplicar camada</button>
+      </div>
+      <input id="svgInput" type="file" accept=".svg,image/svg+xml">
+      <input id="imageInput" type="file" accept=".png,.jpg,.jpeg,image/png,image/jpeg">
+      <div class="field" style="margin-top:10px"><label>Texto 3D agrupado</label><input id="textInput" type="text" value="Ghost 3D"><div class="hintlabel">O texto nasce em uma única camada agrupada.</div></div>
+      <div class="row">
+        <div class="field" style="margin:0"><label>Tamanho</label><input id="textSize" type="number" step="1" value="0.55"></div>
+        <div class="field" style="margin:0"><label>Profundidade</label><input id="textDepth" type="number" step="0.05" value="0.22"></div>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-title">CAMADAS</div>
+      <div id="layerList" class="layerList"><div class="hintlabel">Ainda não há camadas.</div></div>
+      <div class="row" style="margin-top:10px">
+        <button id="deleteLayerBtn" class="danger" disabled>Excluir camada</button>
+        <button id="fitBtn" class="secondary" disabled>Enquadrar</button>
+      </div>
+      <div class="field" style="margin-top:10px"><label>Nome da camada</label><input id="layerNameInput" type="text" value=""><div class="hintlabel">Renomeia a camada selecionada.</div></div>
+      <div class="row">
+        <button id="renameLayerBtn" class="secondary" disabled>Renomear</button>
+        <button id="duplicateLayerBtn2" class="secondary" disabled>Duplicar</button>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-title">TRANSFORMAÇÃO DA CAMADA</div>
+      <div class="field"><label>Posição X / Y / Z</label><div class="row3"><input id="posX" type="number" step="0.1" value="0"><input id="posY" type="number" step="0.1" value="0"><input id="posZ" type="number" step="0.1" value="0"></div><div class="hintlabel">Move a camada selecionada no espaço 3D.</div></div>
+      <div class="field"><label>Rotação X / Y / Z (graus)</label><div class="row3"><input id="rotX" type="number" step="1" value="0"><input id="rotY" type="number" step="1" value="0"><input id="rotZ" type="number" step="1" value="0"></div><div class="hintlabel">Rotaciona a camada selecionada.</div></div>
+      <div class="field"><label>Escala X / Y / Z</label><div class="row3"><input id="scaleX" type="number" step="0.1" value="1"><input id="scaleY" type="number" step="0.1" value="1"><input id="scaleZ" type="number" step="0.1" value="1"></div><div class="hintlabel">Redimensiona a camada selecionada.</div></div>
+      <div class="row">
+        <button id="applyTransformBtn" class="secondary" disabled>Aplicar transformação</button>
+        <button id="resetTransformBtn" class="secondary" disabled>Zerar transformação</button>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-title">MATERIAL</div>
+      <div class="field"><label>Cor do modelo</label><input id="color" type="color" value="#7c5cff"></div>
+      <div class="field"><label>Acabamento</label><select id="finish"><option value="matte">Fosco</option><option value="gloss">Brilhante</option><option value="metal">Metálico</option></select></div>
+    </div>
+
+    <div class="section">
+      <div class="section-title">PINCEL 3D PRO</div>
+      <div class="field"><label>Status do pincel</label><div id="brushStatus" class="value">⏳ Crie ou selecione uma camada</div><div class="hintlabel">Esculpe na camada selecionada se ela estiver visível e desbloqueada.</div></div>
+      <div class="row">
+        <button id="toggleSculptBtn" class="ok" disabled>Ativar escultura</button>
+        <button id="undoStrokeBtn" class="secondary" disabled>Desfazer pincel</button>
+      </div>
+      <div class="field" style="margin-top:10px"><label>Modo do pincel</label><select id="brushMode"><option value="clay" selected>Argila / Clay</option><option value="raise">Elevar</option><option value="lower">Afundar</option><option value="inflate">Inflar</option><option value="flatten">Achatar</option><option value="pinch">Pinçar</option><option value="crease">Crease / Corte</option><option value="smooth">Suavizar</option></select></div>
+      <div class="field"><label>Tamanho <span id="sizeV" class="value">24</span></label><input id="brushSize" type="range" min="2" max="80" value="24" step="1"></div>
+      <div class="field"><label>Força <span id="strengthV" class="value">0.55</span></label><input id="brushStrength" type="range" min="0.01" max="1.00" value="0.55" step="0.01"></div>
+      <div class="field"><label>Espaçamento <span id="spacingV" class="value">0.35</span></label><input id="brushSpacing" type="range" min="0.10" max="1.00" value="0.35" step="0.01"></div>
+      <div class="field"><label>Suavidade da borda <span id="falloffV" class="value">2.20</span></label><input id="brushFalloff" type="range" min="0.5" max="4.0" value="2.20" step="0.05"></div>
+      <div class="row">
+        <button id="clearSculptBtn" class="secondary" disabled>Limpar detalhe</button>
+        <button id="clearMaskBtn" class="ghost" disabled>Limpar máscara</button>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-title">SIMETRIA / MALHA</div>
+      <div class="toggleRow">
+        <button id="symXBtn" class="secondary">Simetria X</button>
+        <button id="symYBtn" class="secondary">Simetria Y</button>
+        <button id="symZBtn" class="secondary">Simetria Z</button>
+      </div>
+      <div class="row" style="margin-top:10px">
+        <button id="subdivideBtn" class="secondary" disabled>Mais detalhe</button>
+        <button id="remeshBtn" class="secondary" disabled>Remesh leve</button>
+      </div>
+      <div class="row" style="margin-top:10px">
+        <button id="resetMeshBtn" class="secondary" disabled>Resetar malha</button>
+        <button id="exportBtn" class="primary" disabled>Exportar GLB</button>
+      </div>
+      <div class="row" style="margin-top:10px">
+        <button id="exportAllBtn" class="primary" disabled>GLB completo</button>
+        <div></div>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-title">MÁSCARA</div>
+      <div class="toggleRow">
+        <button id="maskPaintBtn" class="secondary">Pintar máscara</button>
+        <button id="maskEraseBtn" class="secondary">Apagar máscara</button>
+      </div>
+      <div class="hintlabel">Vértices mascarados ficam protegidos do pincel.</div>
+    </div>
+  </aside>
+
+  <main class="stage" id="stage">
+    <div class="toolbar">
+      <div class="pill" id="selectionPill">Nenhuma camada</div>
+      <div class="stats">
+        <div class="pill" id="triCount">0 triângulos</div>
+        <div class="pill" id="maskPill">Máscara: 0%</div>
+        <div class="pill" id="sculptPill">Escultura: desligada</div>
+      </div>
+    </div>
+    <div id="empty" class="empty"><div class="empty-card"><div class="icon">◯</div><h2>Crie ou importe um modelo</h2><p>Agora você pode esculpir, importar SVG, criar texto 3D e salvar o projeto.</p></div></div>
+    <div class="hint">Botão direito: girar câmera • Scroll: zoom • Clique esquerdo: selecionar ou esculpir • Shift: suavizar temporariamente</div>
+  </main>
 </div>
-<script src="https://cdn.jsdelivr.net/npm/three@0.125.0/build/three.min.js"></script><script src="https://cdn.jsdelivr.net/npm/three@0.125.0/examples/js/controls/OrbitControls.js"></script><script src="https://cdn.jsdelivr.net/npm/three@0.125.0/examples/js/controls/TransformControls.js"></script><script src="https://cdn.jsdelivr.net/npm/three@0.125.0/examples/js/loaders/SVGLoader.js"></script><script src="https://cdn.jsdelivr.net/npm/three@0.125.0/examples/js/loaders/FontLoader.js"></script><script src="https://cdn.jsdelivr.net/npm/three@0.125.0/examples/js/exporters/GLTFExporter.js"></script><script src="https://cdn.jsdelivr.net/npm/imagetracerjs@1.2.6/imagetracer_v1.2.6.min.js"></script><script src="svg-fix.js?v=96"></script><script src="sculpt96.js?v=96"></script><script src="https://cdn.jsdelivr.net/gh/wallissonghost-code/COREL-3D-GLB@58790bd38fa21e3a764cb967ec53c09eebebb2f8/app87.js"></script><script>document.getElementById('openProject').addEventListener('click',()=>{const f=document.getElementById('file');f.value='';f.accept='.json,application/json';f.click();setTimeout(()=>{f.accept='.svg,image/*,.json'},1000)});const st=document.getElementById('status'),eng=document.getElementById('engine');new MutationObserver(()=>{if(st.textContent.startsWith('Erro ao importar arquivo')&&eng.textContent==='ERRO NO MOTOR 3D'){eng.textContent='MOTOR 3D ATIVO ✓';eng.style.background='#123521';eng.style.color='#8af0b0'}}).observe(st,{childList:true,subtree:true,characterData:true});</script></body></html>
+
+<script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.180.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/"}}</script>
+<script type="module" src="chunks/bootstrap-v101.js?v=101"></script>
+</body>
+</html>
