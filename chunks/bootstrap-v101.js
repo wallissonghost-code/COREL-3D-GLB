@@ -5,6 +5,30 @@ import { SVGLoader } from 'three/addons/loaders/SVGLoader.js';
 import { FontLoader } from 'three/addons/loaders/FontLoader.js';
 import { TextGeometry } from 'three/addons/geometries/TextGeometry.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-const files=['app-v101-part1.txt?v=101','app-v101-part2.txt?v=101','app-v101-part3.txt?v=101','app-v101-part4.txt?v=101','app-v101-part5.txt?v=101','app-v101-part6.txt?v=101'];
-const code=(await Promise.all(files.map(async f=>{const r=await fetch(f,{cache:'no-store'});if(!r.ok)throw new Error('Falha ao carregar '+f);return await r.text()}))).join('\n');
-eval(code);
+
+const files = [
+  'app-v101-part1.txt',
+  'app-v101-part2.txt',
+  'app-v101-part3.txt',
+  'app-v101-part4.txt',
+  'app-v101-part5.txt',
+  'app-v101-part6.txt'
+];
+
+try {
+  const code = (await Promise.all(files.map(async name => {
+    const url = new URL(`${name}?v=102`, import.meta.url);
+    const response = await fetch(url, { cache: 'no-store' });
+    if (!response.ok) throw new Error(`Falha ao carregar ${url.pathname}: HTTP ${response.status}`);
+    return await response.text();
+  }))).join('\n');
+
+  eval(code);
+} catch (error) {
+  console.error('Falha ao iniciar COREL 3D:', error);
+  const status = document.getElementById('status');
+  if (status) {
+    status.textContent = 'ERRO AO CARREGAR O MOTOR 3D: ' + (error?.message || error);
+    status.className = 'status error';
+  }
+}
