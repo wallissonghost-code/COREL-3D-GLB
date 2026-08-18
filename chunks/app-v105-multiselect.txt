@@ -1,0 +1,174 @@
+// V10.5 — SELEÇÃO SEM RESET DE CÂMERA + MARQUEE MULTISELECT
+const multiSelectedIds = new Set();
+let marqueeActive = false;
+let marqueeStart = null;
+let marqueePointerId = null;
+let marqueeBox = null;
+let selectionHelpers = [];
+
+function clearSelectionHelpers(){
+  selectionHelpers.forEach(h=>{ scene.remove(h); if(h.geometry) h.geometry.dispose(); if(h.material) h.material.dispose(); });
+  selectionHelpers=[];
+}
+
+function refreshSelectionHelpers(){
+  clearSelectionHelpers();
+  const ids = multiSelectedIds.size ? multiSelectedIds : new Set(selectedPartId ? [selectedPartId] : []);
+  ids.forEach(id=>{
+    const part=parts.find(p=>p.id===id);
+    if(!part || !part.visible) return;
+    const helper=new THREE.BoxHelper(part.mesh, 0x62d8ff);
+    helper.renderOrder=1000;
+    if(helper.material){ helper.material.depthTest=false; helper.material.transparent=true; helper.material.opacity=0.9; }
+    selectionHelpers.push(helper);
+    scene.add(helper);
+  });
+  const pill=document.getElementById('selectionPill');
+  if(pill && multiSelectedIds.size>1) pill.textContent=`${multiSelectedIds.size} objetos selecionados`;
+}
+
+function setSingleSelectionNoCamera(id){
+  selectedPartId=id;
+  multiSelectedIds.clear();
+  if(id) multiSelectedIds.add(id);
+  renderLayerList(); refreshUi(); syncTransformFields(); refreshSelectionHelpers();
+}
+
+// Substitui a seleção antiga: selecionar nunca mais reposiciona câmera nem altera zoom.
+selectPart=function(id){
+  setSingleSelectionNoCamera(id);
+};
+
+function toggleMultiSelection(id, additive=false){
+  if(!additive) multiSelectedIds.clear();
+  if(additive && multiSelectedIds.has(id)) multiSelectedIds.delete(id);
+  else multiSelectedIds.add(id);
+  selectedPartId = multiSelectedIds.size ? [...multiSelectedIds][multiSelectedIds.size-1] : null;
+  renderLayerList(); refreshUi(); syncTransformFields(); refreshSelectionHelpers();
+  setStatus(multiSelectedIds.size>1 ? `${multiSelectedIds.size} objetos selecionados.` : multiSelectedIds.size===1 ? '1 objeto selecionado.' : 'Seleção limpa.', 'ok');
+}
+
+function ensureMarqueeBox(){
+  if(marqueeBox) return marqueeBox;
+  marqueeBox=document.createElement('div');
+  marqueeBox.id='marqueeSelectionBox';
+  marqueeBox.style.cssText='position:absolute;z-index:30;border:1px solid #62d8ff;background:rgba(98,216,255,.12);pointer-events:none;display:none;';
+  stage.appendChild(marqueeBox);
+  return marqueeBox;
+}
+
+function localPointer(e){
+  const r=renderer.domElement.getBoundingClientRect();
+  return {x:e.clientX-r.left,y:e.clientY-r.top,w:r.width,h:r.height,left:r.left,top:r.top};
+}
+
+function updateMarqueeVisual(a,b){
+  const box=ensureMarqueeBox();
+  const x=Math.min(a.x,b.x), y=Math.min(a.y,b.y), w=Math.abs(b.x-a.x), h=Math.abs(b.y-a.y);
+  box.style.display='block'; box.style.left=x+'px'; box.style.top=y+'px'; box.style.width=w+'px'; box.style.height=h+'px';
+}
+
+function objectScreenRect(mesh){
+  mesh.updateMatrixWorld(true);
+  const box=new THREE.Box3().setFromObject(mesh);
+  if(box.isEmpty()) return null;
+  const min=box.min,max=box.max;
+  const corners=[
+    [min.x,min.y,min.z],[max.x,min.y,min.z],[min.x,max.y,min.z],[max.x,max.y,min.z],
+    [min.x,min.y,max.z],[max.x,min.y,max.z],[min.x,max.y,max.z],[max.x,max.y,max.z]
+  ];
+  const rect=renderer.domElement.getBoundingClientRect();
+  let sx0=Infinity,sy0=Infinity,sx1=-Infinity,sy1=-Infinity,seen=false;
+  for(const c of corners){
+    const p=new THREE.Vector3(c[0],c[1],c[2]).project(camera);
+    if(!Number.isFinite(p.x)||!Number.isFinite(p.y)||p.z<-1||p.z>1) continue;
+    const sx=(p.x*.5+.5)*rect.width;
+    const sy=(-p.y*.5+.5)*rect.height;
+    sx0=Math.min(sx0,sx); sy0=Math.min(sy0,sy); sx1=Math.max(sx1,sx); sy1=Math.max(sy1,sy); seen=true;
+  }
+  return seen?{x0:sx0,y0:sy0,x1:sx1,y1:sy1}:null;
+}
+
+function finishMarquee(e){
+  if(!marqueeActive) return;
+  const end=localPointer(e);
+  const x0=Math.min(marqueeStart.x,end.x), y0=Math.min(marqueeStart.y,end.y), x1=Math.max(marqueeStart.x,end.x), y1=Math.max(marqueeStart.y,end.y);
+  marqueeActive=false;
+  if(marqueeBox) marqueeBox.style.display='none';
+  const additive=e.shiftKey||e.ctrlKey||e.metaKey;
+  if(!additive) multiSelectedIds.clear();
+  const minDrag=6;
+  if((x1-x0)>=minDrag || (y1-y0)>=minDrag){
+    parts.filter(p=>p.visible&&!p.locked).forEach(part=>{
+      const r=objectScreenRect(part.mesh); if(!r) return;
+      // Corel-like: qualquer interseção visual com a caixa entra na seleção.
+      const hit=!(r.x1<x0||r.x0>x1||r.y1<y0||r.y0>y1);
+      if(hit) multiSelectedIds.add(part.id);
+    });
+  }
+  selectedPartId=multiSelectedIds.size?[...multiSelectedIds][multiSelectedIds.size-1]:null;
+  renderLayerList(); refreshUi(); syncTransformFields(); refreshSelectionHelpers();
+  setStatus(multiSelectedIds.size ? `${multiSelectedIds.size} objeto${multiSelectedIds.size===1?'':'s'} selecionado${multiSelectedIds.size===1?'':'s'} pela caixa.` : 'Nenhum objeto dentro da seleção.', multiSelectedIds.size?'ok':'warn');
+}
+
+// Captura antes do seletor antigo. Em área vazia, arrastar vira seleção por caixa.
+renderer.domElement.addEventListener('pointerdown',e=>{
+  if(e.button!==0 || sculptEnabled || (typeof cutEnabled!=='undefined' && cutEnabled)) return;
+  const hits=intersectVisibleParts(e);
+  if(hits.length){
+    if(e.shiftKey||e.ctrlKey||e.metaKey){
+      e.preventDefault(); e.stopImmediatePropagation();
+      const p=parts.find(x=>x.mesh===hits[0].object);
+      if(p) toggleMultiSelection(p.id,true);
+    }
+    return;
+  }
+  e.preventDefault(); e.stopImmediatePropagation();
+  marqueeActive=true; marqueePointerId=e.pointerId; marqueeStart=localPointer(e);
+  try{renderer.domElement.setPointerCapture(e.pointerId)}catch(_){}
+  updateMarqueeVisual(marqueeStart,marqueeStart);
+},true);
+
+renderer.domElement.addEventListener('pointermove',e=>{
+  if(!marqueeActive || e.pointerId!==marqueePointerId) return;
+  e.preventDefault(); e.stopImmediatePropagation(); updateMarqueeVisual(marqueeStart,localPointer(e));
+},true);
+
+renderer.domElement.addEventListener('pointerup',e=>{
+  if(!marqueeActive || e.pointerId!==marqueePointerId) return;
+  e.preventDefault(); e.stopImmediatePropagation(); finishMarquee(e); marqueePointerId=null;
+},true);
+
+// Clique comum numa peça: seleciona sem alterar a câmera.
+renderer.domElement.addEventListener('pointerup',e=>{
+  if(e.button!==0 || sculptEnabled || (typeof cutEnabled!=='undefined' && cutEnabled) || marqueeActive) return;
+  if(e.shiftKey||e.ctrlKey||e.metaKey) return;
+  const hits=intersectVisibleParts(e);
+  if(hits.length){ const p=parts.find(x=>x.mesh===hits[0].object); if(p) setSingleSelectionNoCamera(p.id); }
+},true);
+
+// Botão explícito para limpar múltipla seleção.
+(function installMultiSelectUI(){
+  if(document.getElementById('clearMultiBtn')) return;
+  const bar=document.getElementById('viewBar');
+  if(!bar) return;
+  const btn=document.createElement('button'); btn.id='clearMultiBtn'; btn.className='secondary'; btn.style.cssText='padding:8px 10px'; btn.textContent='Limpar seleção';
+  btn.onclick=()=>{ multiSelectedIds.clear(); selectedPartId=null; renderLayerList(); refreshUi(); syncTransformFields(); refreshSelectionHelpers(); setStatus('Seleção limpa.','ok'); };
+  bar.appendChild(btn);
+})();
+
+const oldRenderLayerList=renderLayerList;
+renderLayerList=function(){
+  oldRenderLayerList();
+  document.querySelectorAll('.layerItem').forEach((el,i)=>{
+    const part=parts[i];
+    if(part && multiSelectedIds.has(part.id)){
+      el.classList.add('active');
+      el.style.boxShadow='inset 0 0 0 1px rgba(98,216,255,.8)';
+    }else el.style.boxShadow='';
+  });
+};
+renderLayerList(); refreshSelectionHelpers();
+
+const v105=document.querySelector('.brand small'); if(v105) v105.textContent='V10.5 • multiseleção estilo Corel';
+document.title='COREL 3D GLB Studio V10.5 — Multiseleção';
