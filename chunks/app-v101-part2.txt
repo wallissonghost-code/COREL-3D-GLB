@@ -69,7 +69,8 @@ function renderLayerList(){
     item.append(vis, mid, lock, del); item.onclick = ()=> selectPart(part.id); box.appendChild(item);
   });
 }
-function selectPart(id){ selectedPartId = id; renderLayerList(); refreshUi(); syncTransformFields(); fitCameraToSelection(); }
+// Selecionar muda somente o estado de seleção. A câmera fica exatamente onde o usuário deixou.
+function selectPart(id){ selectedPartId = id; renderLayerList(); refreshUi(); syncTransformFields(); }
 function deletePart(id){ const idx = parts.findIndex(p=>p.id===id); if(idx<0) return; const part = parts[idx]; scene.remove(part.mesh); part.mesh.geometry.dispose(); part.mesh.material.dispose(); parts.splice(idx,1); if(selectedPartId===id) selectedPartId = parts[0]?.id || null; if(!parts.length){ $('empty').style.display='grid'; sculptEnabled=false; } renderLayerList(); refreshUi(); syncTransformFields(); setStatus('Camada excluída.', 'ok'); }
 function fitCameraToSelection(){
   const mesh=currentMesh(); if(!mesh) return;
