@@ -1,0 +1,101 @@
+
+const $ = id => document.getElementById(id);
+const status = $('status');
+const setStatus = (t, type='') => { status.textContent = t; status.className = 'status ' + type; };
+const stage = $('stage');
+let partIdSeed = 1;
+const parts = [];
+let selectedPartId = null;
+let brushRing = null;
+let sculptEnabled = false, sculpting = false, strokeDirty = false, lastStrokePoint = null, evtShiftSmooth = false;
+const sculptUndoStack = [];
+const symmetry = {x:false,y:false,z:false};
+let maskMode = 'none';
+let cachedFont = null;
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x090b10);
+const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 1000);
+camera.position.set(0, -5.5, 3.8);
+const renderer = new THREE.WebGLRenderer({antialias:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.shadowMap.enabled = true; stage.appendChild(renderer.domElement);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true; controls.dampingFactor = 0.06; controls.target.set(0,0,0); controls.mouseButtons.LEFT = null; controls.mouseButtons.MIDDLE = THREE.MOUSE.DOLLY; controls.mouseButtons.RIGHT = THREE.MOUSE.ROTATE;
+scene.add(new THREE.HemisphereLight(0xbfd5ff, 0x10131a, 2.0)); const key = new THREE.DirectionalLight(0xffffff, 3.0); key.position.set(4,-6,7); key.castShadow = true; scene.add(key); const rim = new THREE.DirectionalLight(0x7c5cff, 1.8); rim.position.set(-5,5,3); scene.add(rim); const grid = new THREE.GridHelper(20,20,0x283142,0x161b24); grid.rotation.x = Math.PI/2; grid.position.z=-1.2; scene.add(grid);
+const raycaster = new THREE.Raycaster(); const pointer = new THREE.Vector2();
+
+function resize(){ const w=stage.clientWidth, h=stage.clientHeight; renderer.setSize(w,h,false); camera.aspect=w/h; camera.updateProjectionMatrix(); }
+addEventListener('resize', resize); resize();
+function makeMaterial(){ const c=$('color').value, f=$('finish').value; let rough=0.72, metal=0.04; if(f==='gloss'){rough=0.15; metal=0.08;} if(f==='metal'){rough=0.28; metal=0.88;} return new THREE.MeshStandardMaterial({color:c, roughness:rough, metalness:metal, flatShading:false, vertexColors:true}); }
+function grayColor(mask){ return new THREE.Color(1-mask*0.7,1-mask*0.7,1-mask*0.7); }
+function initVertexAttributes(geom){ const count=geom.attributes.position.count; if(!geom.getAttribute('color')){ const colors=new Float32Array(count*3); for(let i=0;i<count;i++){ colors[i*3]=1; colors[i*3+1]=1; colors[i*3+2]=1; } geom.setAttribute('color', new THREE.BufferAttribute(colors,3)); } if(!(geom.userData.mask instanceof Float32Array) || geom.userData.mask.length!==count) geom.userData.mask = new Float32Array(count); }
+function currentPart(){ return parts.find(p=>p.id===selectedPartId) || null; }
+function currentMesh(){ return currentPart()?.mesh || null; }
+function anyParts(){ return parts.length > 0; }
+
+function createPartFromGeometry(geometry, name, type='mesh'){
+  const g = geometry.toNonIndexed ? geometry.toNonIndexed() : geometry; g.computeVertexNormals(); initVertexAttributes(g);
+  const mesh = new THREE.Mesh(g, makeMaterial()); mesh.castShadow = true; mesh.receiveShadow = true; mesh.name = name;
+  mesh.userData.baseGeometry = g.clone(); mesh.userData.baseMask = new Float32Array(g.attributes.position.count);
+  const part = {id:partIdSeed++, name, type, mesh, visible:true, locked:false}; parts.push(part); scene.add(mesh); selectPart(part.id); renderLayerList(); refreshUi(); $('empty').style.display='none'; fitCameraToSelection(); setStatus(`${name} criado/importado com sucesso.`, 'ok'); return part;
+}
+
+function addSphere(){ createPartFromGeometry(new THREE.SphereGeometry(1.05, 64, 48), 'Esfera bruta', 'primitive'); }
+function addCube(){ createPartFromGeometry(new THREE.BoxGeometry(1.8,1.8,1.8,40,40,40), 'Cubo bruto', 'primitive'); }
+function addCylinder(){ createPartFromGeometry(new THREE.CylinderGeometry(1.0,1.0,2.1,56,40,true), 'Cilindro bruto', 'primitive'); }
+
+async function ensureFont(){ if(cachedFont) return cachedFont; cachedFont = await new FontLoader().loadAsync('https://cdn.jsdelivr.net/npm/three@0.180.0/examples/fonts/helvetiker_bold.typeface.json'); return cachedFont; }
+async function createGroupedText(){
+  try{
+    const text = ($('textInput').value || '').trim(); if(!text){ setStatus('Digite um texto antes de criar.', 'error'); return; }
+    const font = await ensureFont(); const size = Math.max(0.05, +$('textSize').value || 0.55); const depth = Math.max(0.02, +$('textDepth').value || 0.22);
+    const geo = new TextGeometry(text, {font, size, depth, curveSegments:10, bevelEnabled:false}); geo.center();
+    createPartFromGeometry(geo, `Texto: ${text}`, 'text');
+  }catch(err){ console.error(err); setStatus('Falha ao criar o texto 3D.', 'error'); }
+}
+
+async function importSvgFile(file){
+  try{
+    const txt = await file.text(); const loader = new SVGLoader(); const data = loader.parse(txt); const geos = [];
+    data.paths.forEach(path=>{ const shapes = SVGLoader.createShapes(path); shapes.forEach(shape=>{ const g = new THREE.ExtrudeGeometry(shape,{depth:0.15,bevelEnabled:false,curveSegments:10}); geos.push(g.toNonIndexed()); }); });
+    if(!geos.length){ setStatus('Nenhuma forma preenchida foi encontrada no SVG.', 'error'); return; }
+    const merged = mergeGeometries(geos, false); merged.center(); merged.rotateX(Math.PI);
+    createPartFromGeometry(merged, file.name.replace(/\.svg$/i,''), 'svg');
+  }catch(err){ console.error(err); setStatus('Falha ao importar SVG.', 'error'); }
+}
+
+async function importImageRelief(file){
+  try{
+    const img = await createImageBitmap(file);
+    const maxSide = 80;
+    let w = img.width, h = img.height;
+    const scale = Math.min(1, maxSide / Math.max(w,h));
+    w = Math.max(12, Math.round(w*scale));
+    h = Math.max(12, Math.round(h*scale));
+    const canvas = document.createElement('canvas'); canvas.width = w; canvas.height = h;
+    const ctx = canvas.getContext('2d', {willReadFrequently:true});
+    ctx.drawImage(img, 0, 0, w, h);
+    const data = ctx.getImageData(0,0,w,h).data;
+    const geom = new THREE.PlaneGeometry(2, 2*(h/w), w-1, h-1);
+    const pos = geom.attributes.position;
+    for(let iy=0; iy<h; iy++){
+      for(let ix=0; ix<w; ix++){
+        const src=((h-1-iy)*w+ix)*4;
+        const r=data[src], g=data[src+1], b=data[src+2], a=data[src+3]/255;
+        const lum=((r+g+b)/3)/255;
+        const depth=(lum*0.42 + a*0.08);
+        const idx=iy*w+ix;
+        pos.setZ(idx, depth);
+      }
+    }
+    geom.computeVertexNormals();
+    geom.center();
+    createPartFromGeometry(geom, file.name.replace(/\.(png|jpg|jpeg)$/i,''), 'image-relief');
+    setStatus('PNG/JPG importado como relevo 3D simplificado.', 'ok');
+  }catch(err){ console.error(err); setStatus('Falha ao importar PNG/JPG.', 'error'); }
+}
+
+function duplicateCurrentPart(){
+  const part=currentPart(); if(!part) return;
+  const g=part.mesh.geometry.clone();
