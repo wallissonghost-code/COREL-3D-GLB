@@ -1,0 +1,75 @@
+  if(g.userData && g.userData.mask) g.userData.mask = new Float32Array(g.userData.mask);
+  const clone=createPartFromGeometry(g, part.name + ' copia', part.type);
+  clone.mesh.position.copy(part.mesh.position).add(new THREE.Vector3(0.25,0.25,0));
+  clone.mesh.rotation.copy(part.mesh.rotation);
+  clone.mesh.scale.copy(part.mesh.scale);
+  clone.mesh.material.dispose();
+  clone.mesh.material = part.mesh.material.clone();
+  clone.visible = part.visible; clone.mesh.visible = part.visible;
+  clone.locked = false;
+  clone.mesh.userData.baseGeometry = g.clone();
+  clone.mesh.userData.baseMask = part.mesh.userData.baseMask ? new Float32Array(part.mesh.userData.baseMask) : new Float32Array(clone.mesh.geometry.attributes.position.count);
+  syncTransformFields();
+  renderLayerList(); refreshUi();
+  setStatus('Camada duplicada com sucesso.', 'ok');
+}
+
+function renameCurrentPart(){
+  const part=currentPart(); if(!part) return;
+  const value=($('layerNameInput').value||'').trim();
+  if(!value){ setStatus('Digite um nome para a camada.', 'error'); return; }
+  part.name = value; part.mesh.name = value; renderLayerList(); refreshUi(); setStatus('Camada renomeada.', 'ok');
+}
+
+function syncTransformFields(){
+  const part=currentPart();
+  if(!part){ ['layerNameInput','posX','posY','posZ','rotX','rotY','rotZ','scaleX','scaleY','scaleZ'].forEach(id=>{ if($(id).type==='text') $(id).value=''; else $(id).value = id.startsWith('scale') ? 1 : 0; }); return; }
+  $('layerNameInput').value = part.name;
+  $('posX').value = part.mesh.position.x.toFixed(2); $('posY').value = part.mesh.position.y.toFixed(2); $('posZ').value = part.mesh.position.z.toFixed(2);
+  $('rotX').value = THREE.MathUtils.radToDeg(part.mesh.rotation.x).toFixed(1); $('rotY').value = THREE.MathUtils.radToDeg(part.mesh.rotation.y).toFixed(1); $('rotZ').value = THREE.MathUtils.radToDeg(part.mesh.rotation.z).toFixed(1);
+  $('scaleX').value = part.mesh.scale.x.toFixed(2); $('scaleY').value = part.mesh.scale.y.toFixed(2); $('scaleZ').value = part.mesh.scale.z.toFixed(2);
+}
+
+function applyTransformFromFields(){
+  const part=currentPart(); if(!part) return;
+  part.mesh.position.set(parseFloat($('posX').value)||0, parseFloat($('posY').value)||0, parseFloat($('posZ').value)||0);
+  part.mesh.rotation.set(THREE.MathUtils.degToRad(parseFloat($('rotX').value)||0), THREE.MathUtils.degToRad(parseFloat($('rotY').value)||0), THREE.MathUtils.degToRad(parseFloat($('rotZ').value)||0));
+  part.mesh.scale.set(Math.max(0.01, parseFloat($('scaleX').value)||1), Math.max(0.01, parseFloat($('scaleY').value)||1), Math.max(0.01, parseFloat($('scaleZ').value)||1));
+  fitCameraToSelection();
+  setStatus('Transformação aplicada à camada selecionada.', 'ok');
+}
+
+function resetTransformFields(){
+  const part=currentPart(); if(!part) return;
+  part.mesh.position.set(0,0,0); part.mesh.rotation.set(0,0,0); part.mesh.scale.set(1,1,1); syncTransformFields(); fitCameraToSelection(); setStatus('Transformação resetada.', 'ok');
+}
+
+function exportAllVisible(){
+  const visibles = parts.filter(p=>p.visible).map(p=>p.mesh.clone());
+  if(!visibles.length){ setStatus('Não há camadas visíveis para exportar.', 'error'); return; }
+  const group = new THREE.Group(); visibles.forEach(m=>group.add(m));
+  const exporter = new GLTFExporter();
+  setStatus('Gerando GLB completo com todas as camadas visíveis...');
+  exporter.parse(group, res=>{ const blob=new Blob([res],{type:'model/gltf-binary'}); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='corel-3d-glb-v10-completo.glb'; a.click(); setTimeout(()=>URL.revokeObjectURL(a.href),1000); setStatus('GLB completo exportado com sucesso.', 'ok'); }, err=>{ console.error(err); setStatus('Erro ao exportar o GLB completo.', 'error'); }, {binary:true, trs:false, onlyVisible:true});
+}
+
+function renderLayerList(){
+  const box = $('layerList');
+  if(!parts.length){ box.innerHTML = '<div class="hintlabel">Ainda não há camadas.</div>'; return; }
+  box.innerHTML = '';
+  parts.forEach(part=>{
+    const item = document.createElement('div'); item.className = 'layerItem' + (part.id===selectedPartId ? ' active':'' );
+    const vis = document.createElement('button'); vis.className='mini secondary'; vis.textContent = part.visible ? '👁' : '🚫'; vis.title='Mostrar/ocultar';
+    vis.onclick = (e)=>{ e.stopPropagation(); part.visible = !part.visible; part.mesh.visible = part.visible; if(part.id===selectedPartId && !part.visible){ sculptEnabled=false; } renderLayerList(); refreshUi(); };
+    const mid = document.createElement('div'); mid.innerHTML = `<div class="layerName">${part.name}</div><div class="layerMeta">${part.type} • ${part.locked?'bloqueada':'editável'}</div>`;
+    const lock = document.createElement('button'); lock.className='mini secondary'; lock.textContent = part.locked ? '🔒' : '🔓'; lock.title='Bloquear/desbloquear';
+    lock.onclick = (e)=>{ e.stopPropagation(); part.locked = !part.locked; if(part.id===selectedPartId && part.locked) sculptEnabled=false; renderLayerList(); refreshUi(); };
+    const del = document.createElement('button'); del.className='mini danger'; del.textContent='✕'; del.title='Excluir camada';
+    del.onclick = (e)=>{ e.stopPropagation(); deletePart(part.id); };
+    item.append(vis, mid, lock, del); item.onclick = ()=> selectPart(part.id); box.appendChild(item);
+  });
+}
+function selectPart(id){ selectedPartId = id; renderLayerList(); refreshUi(); syncTransformFields(); fitCameraToSelection(); }
+function deletePart(id){ const idx = parts.findIndex(p=>p.id===id); if(idx<0) return; const part = parts[idx]; scene.remove(part.mesh); part.mesh.geometry.dispose(); part.mesh.material.dispose(); parts.splice(idx,1); if(selectedPartId===id) selectedPartId = parts[0]?.id || null; if(!parts.length){ $('empty').style.display='grid'; sculptEnabled=false; } renderLayerList(); refreshUi(); syncTransformFields(); setStatus('Camada excluída.', 'ok'); }
+function fitCameraToSelection(){ const mesh=currentMesh(); if(!mesh) return; const box=new THREE.Box3().setFromObject(mesh), size=box.getSize(new THREE.Vector3()), center=box.getCenter(new THREE.Vector3()); const max=Math.max(size.x,size.y,size.z,1); const dist=max/(2*Math.tan(THREE.MathUtils.degToRad(camera.fov/2)))*1.8; camera.position.set(center.x, center.y - dist*0.9, center.z + dist*0.55); controls.target.set(0,0,0); camera.updateProjectionMatrix(); }
+function updateTriCount(){ const mesh=currentMesh(); if(!mesh){ $('triCount').textContent='0 triângulos'; return; } const g=mesh.geometry; const tris = g.index ? g.index.count/3 : g.attributes.position.count/3; $('triCount').textContent=`${Math.round(tris).toLocaleString('pt-BR')} triângulos`; }
