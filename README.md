@@ -1,80 +1,21 @@
-# COREL 3D GLB Studio V8
+# COREL 3D GLB Studio V10.1 — Pincel corrigido
 
-Editor 3D no navegador focado no fluxo **CorelDRAW → SVG → GLB**, com suporte adicional para imagens, PDF, DXF, texto 3D e modelagem geométrica.
+Hotfix focado no pincel de escultura.
 
-## Abrir online
+## Correções
+- Corrigida a normal usada para deformar a malha.
+- Pincel com raio maior e força mais perceptível.
+- Novo modo padrão **Argila / Clay**.
+- Elevar/Afundar/Inflar/Crease também ficaram mais fortes.
+- O botão direito continua girando a câmera durante a escultura.
+- O canvas captura o ponteiro durante o stroke para o traço não cortar.
+- Mensagem visível quando o pincel realmente encosta na malha.
 
-**GitHub Pages:** https://wallissonghost-code.github.io/COREL-3D-GLB/
-
-## V8 — principais recursos
-
-### Importação
-- SVG vetorial
-- PNG / JPG / WEBP com vetorização automática
-- PDF: renderiza a primeira página e vetoriza para peças 3D
-- DXF 2D: polilinhas fechadas e círculos
-- Projeto JSON salvo pelo próprio editor
-
-### Formas geométricas 2D
-- retângulo
-- retângulo arredondado
-- quadrado
-- círculo
-- elipse
-- triângulo
-- losango
-- pentágono
-- hexágono
-- octógono
-- estrela
-- seta
-
-### Primitivas 3D
-- cubo / caixa
-- esfera
-- cilindro
-- cone
-- pirâmide
-- toro
-- cápsula
-
-### Modelagem
-- mover / rotacionar / escalar com gizmo
-- snap
-- espelhar X / Y / Z
-- alinhar ao centro
-- assentar no chão
-- distribuir no eixo X
-- booleanas: unir / subtrair / interseção
-- relevo e baixo-relevo rápidos
-- base automática
-- texto 3D
-
-### Materiais e apresentação
-- fosco
-- brilhante
-- plástico
-- metálico
-- ouro
-- cromado
-- presets de iluminação
-- fundos de preview
-- auto-rotação
-- salvar preview PNG
-
-### Exportação
-- GLB completo
-- GLB da peça selecionada
-- GLB mesclado
-- otimização para Roblox
-- salvar / abrir projeto
-- desfazer / refazer
-
-## Como usar
-Abra o link do GitHub Pages ou `index.html` em um navegador moderno com internet. O projeto carrega Three.js e bibliotecas auxiliares por CDN.
-
-## Limitações atuais
-- `.CDR` direto ainda não é aberto pelo navegador; use **CorelDRAW → SVG** para maior fidelidade.
-- PDF é convertido pela primeira página renderizada e vetorizada.
-- DXF nesta versão prioriza geometria 2D compatível: polilinhas fechadas e círculos.
-- Booleanas funcionam melhor em malhas fechadas e relativamente simples.
+## Teste recomendado
+1. Crie uma esfera bruta.
+2. Clique em **Ativar escultura**.
+3. Deixe **Argila / Clay** selecionado.
+4. Tamanho: 24.
+5. Força: 0.55.
+6. Segure o clique esquerdo e arraste sobre a esfera.
+7. A superfície deve crescer seguindo o traço.
