@@ -12,12 +12,13 @@ const files = [
   'app-v101-part3.txt',
   'app-v101-part4.txt',
   'app-v101-part5.txt',
-  'app-v101-part6.txt'
+  'app-v101-part6.txt',
+  'app-v1032-viewfix.txt'
 ];
 
 try {
   const code = (await Promise.all(files.map(async name => {
-    const url = new URL(`${name}?v=105`, import.meta.url);
+    const url = new URL(`${name}?v=106`, import.meta.url);
     const response = await fetch(url, { cache: 'no-store' });
     if (!response.ok) throw new Error(`Falha ao carregar ${url.pathname}: HTTP ${response.status}`);
     return await response.text();
