@@ -17,7 +17,7 @@ const files = [
 
 try {
   const code = (await Promise.all(files.map(async name => {
-    const url = new URL(`${name}?v=103`, import.meta.url);
+    const url = new URL(`${name}?v=104`, import.meta.url);
     const response = await fetch(url, { cache: 'no-store' });
     if (!response.ok) throw new Error(`Falha ao carregar ${url.pathname}: HTTP ${response.status}`);
     return await response.text();
