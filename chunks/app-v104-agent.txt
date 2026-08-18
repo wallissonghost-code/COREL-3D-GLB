@@ -1,0 +1,159 @@
+// ===== V10.4 • AGENTE 3D LOCAL =====
+let agentBusy=false;
+
+function installAgent3DUI(){
+  if(document.getElementById('agent3dSection')) return;
+  const sidebar=document.querySelector('.sidebar');
+  if(!sidebar) return;
+  const projectTitle=[...document.querySelectorAll('.section-title')].find(el=>el.textContent.includes('PROJETO EDITÁVEL'));
+  const anchor=projectTitle?.parentElement;
+  const section=document.createElement('div');
+  section.className='section'; section.id='agent3dSection';
+  section.innerHTML=`
+    <div class="section-title">AGENTE 3D</div>
+    <div class="field">
+      <label>O que você quer criar ou alterar?</label>
+      <textarea id="agentPrompt" rows="5" style="width:100%;resize:vertical;background:#0b0f15;color:var(--text);border:1px solid var(--line);padding:11px;border-radius:10px;font:inherit;line-height:1.4" placeholder="Ex.: Crie uma casa de 2 andares com porta e janelas"></textarea>
+      <div class="hintlabel">Entende comandos simples em português e também planos JSON. Tudo é criado em camadas editáveis.</div>
+    </div>
+    <div class="row">
+      <button id="agentRunBtn" class="primary">Executar agente</button>
+      <button id="agentExampleBtn" class="secondary">Exemplo</button>
+    </div>
+    <div id="agentAnswer" class="status" style="margin-top:9px">Agente pronto.</div>
+  `;
+  if(anchor) anchor.after(section); else sidebar.prepend(section);
+  $('agentExampleBtn').addEventListener('click',()=>{
+    $('agentPrompt').value='Crie uma casa de 2 andares com base de 8 por 6, porta na frente, 6 janelas e telhado vermelho';
+  });
+  $('agentRunBtn').addEventListener('click',runAgentPrompt);
+}
+
+function agentSay(text,type=''){
+  const el=$('agentAnswer'); if(el){ el.textContent=text; el.className='status '+type; }
+  setStatus(text,type);
+}
+function agentNum(text,re,fallback){ const m=text.match(re); return m ? parseFloat(m[1].replace(',','.')) : fallback; }
+function agentColor(text,fallback='#7c5cff'){
+  const map={vermelho:'#c43b45',azul:'#3d66c7',verde:'#4f9d63',amarelo:'#d7b83f',branco:'#eeeeee',preto:'#202124',cinza:'#777b84',laranja:'#d87935',marrom:'#7a5136',roxo:'#7c5cff',rosa:'#d56e9f'};
+  for(const [k,v] of Object.entries(map)) if(text.includes(k)) return v;
+  const hex=text.match(/#[0-9a-f]{6}\b/i); return hex?hex[0]:fallback;
+}
+function agentMaterial(color,roughness=.65,metalness=.04){
+  return new THREE.MeshStandardMaterial({color,roughness,metalness,vertexColors:true});
+}
+function agentApplyMaterial(part,spec={}){
+  if(!part) return;
+  const color=spec.color||'#7c5cff';
+  part.mesh.material.dispose();
+  part.mesh.material=agentMaterial(color,spec.roughness??.65,spec.metalness??.04);
+}
+function agentCreate(spec){
+  const type=(spec.type||'box').toLowerCase();
+  let g;
+  if(type==='sphere' || type==='esfera') g=new THREE.SphereGeometry(spec.radius||1,48,32);
+  else if(type==='cylinder' || type==='cilindro') g=new THREE.CylinderGeometry(spec.radius||1,spec.radius||1,spec.height||2,48,18,false);
+  else {
+    const s=spec.size||[1,1,1]; g=new THREE.BoxGeometry(s[0]||1,s[1]||1,s[2]||1,Math.max(1,spec.segments||1),Math.max(1,spec.segments||1),Math.max(1,spec.segments||1));
+  }
+  const p=createPartFromGeometry(g,spec.name||'Agente 3D','agent');
+  const pos=spec.position||[0,0,0]; p.mesh.position.set(pos[0]||0,pos[1]||0,pos[2]||0);
+  const rot=spec.rotation||[0,0,0]; p.mesh.rotation.set(THREE.MathUtils.degToRad(rot[0]||0),THREE.MathUtils.degToRad(rot[1]||0),THREE.MathUtils.degToRad(rot[2]||0));
+  const sc=spec.scale||[1,1,1]; p.mesh.scale.set(sc[0]||1,sc[1]||1,sc[2]||1);
+  agentApplyMaterial(p,spec.material||{color:spec.color||'#7c5cff'});
+  p.mesh.userData.agentGroup=spec.group||null;
+  return p;
+}
+
+function agentHousePlan(text){
+  const floors=Math.max(1,Math.min(12,Math.round(agentNum(text,/(\d+)\s*andares?/i,2))));
+  const width=agentNum(text,/(?:base|largura)[^\d]*(\d+(?:[.,]\d+)?)/i,8);
+  const depth=agentNum(text,/(?:por|profundidade)[^\d]*(\d+(?:[.,]\d+)?)/i,6);
+  const floorH=3; const wall=.22; const totalH=floors*floorH;
+  const roofColor=text.includes('telhado vermelho')?'#a63d35':'#6a3f33';
+  const plan=[];
+  plan.push({type:'box',name:'Piso',size:[width,depth,.25],position:[0,0,.125],color:'#777777',group:'Casa'});
+  plan.push({type:'box',name:'Parede frente',size:[width,wall,totalH],position:[0,-depth/2,totalH/2],color:'#ded7c8',group:'Casa'});
+  plan.push({type:'box',name:'Parede fundo',size:[width,wall,totalH],position:[0,depth/2,totalH/2],color:'#ded7c8',group:'Casa'});
+  plan.push({type:'box',name:'Parede esquerda',size:[wall,depth,totalH],position:[-width/2,0,totalH/2],color:'#d4ccbd',group:'Casa'});
+  plan.push({type:'box',name:'Parede direita',size:[wall,depth,totalH],position:[width/2,0,totalH/2],color:'#d4ccbd',group:'Casa'});
+  for(let f=1;f<floors;f++) plan.push({type:'box',name:`Laje ${f+1}`,size:[width,depth,.18],position:[0,0,f*floorH],color:'#999999',group:'Casa'});
+  const doorW=1.3,doorH=2.3;
+  plan.push({type:'box',name:'Porta',size:[doorW,.12,doorH],position:[0,-depth/2-.12,doorH/2],color:'#6b432a',group:'Casa'});
+  const requested=Math.round(agentNum(text,/(\d+)\s*janelas?/i,Math.max(4,floors*4)));
+  const winCount=Math.max(2,Math.min(30,requested));
+  for(let i=0;i<winCount;i++){
+    const f=i%floors, side=Math.floor(i/floors)%2, row=Math.floor(i/(floors*2));
+    const perRow=Math.max(1,Math.ceil(winCount/(floors*2)));
+    const x=-width*.32 + (perRow===1?width*.32:row*(width*.64/Math.max(1,perRow-1)));
+    plan.push({type:'box',name:`Janela ${i+1}`,size:[1.05,.10,1.15],position:[x,side?-depth/2-.13:depth/2+.13,f*floorH+1.75],color:'#68a7c9',metalness:.12,roughness:.18,group:'Casa'});
+  }
+  plan.push({type:'box',name:'Telhado',size:[width+.5,depth+.5,.32],position:[0,0,totalH+.28],rotation:[0,0,0],color:roofColor,group:'Casa'});
+  return plan;
+}
+
+function agentBuildingPlan(text){
+  const floors=Math.max(1,Math.min(30,Math.round(agentNum(text,/(\d+)\s*andares?/i,5))));
+  const w=agentNum(text,/largura[^\d]*(\d+(?:[.,]\d+)?)/i,10), d=agentNum(text,/profundidade[^\d]*(\d+(?:[.,]\d+)?)/i,7), fh=3;
+  const plan=[{type:'box',name:'Prédio principal',size:[w,d,floors*fh],position:[0,0,floors*fh/2],color:agentColor(text,'#a9adb5'),group:'Predio'}];
+  for(let f=0;f<floors;f++) for(let x=-1;x<=1;x++) plan.push({type:'box',name:`Janela ${f+1}-${x+2}`,size:[1.4,.08,1.2],position:[x*w*.25,-d/2-.05,f*fh+1.7],color:'#5c9fc5',roughness:.15,metalness:.08,group:'Predio'});
+  return plan;
+}
+
+async function executeAgentPlan(plan){
+  if(!Array.isArray(plan)) plan=plan.objects||plan.commands||[];
+  if(!Array.isArray(plan) || !plan.length) throw new Error('Plano vazio.');
+  let created=0;
+  for(const cmd of plan){
+    const action=(cmd.action||cmd.op||'create').toLowerCase();
+    if(action==='create' || action==='add'){ agentCreate(cmd); created++; }
+    else if(action==='delete_selected'){ const p=currentPart(); if(p) deletePart(p.id); }
+    else if(action==='duplicate_selected'){ duplicateCurrentPart(); }
+    else if(action==='view'){ if(typeof setSceneView==='function') setSceneView(cmd.view||'front'); }
+    else if(action==='transform_selected'){
+      const p=currentPart(); if(!p) continue;
+      if(cmd.position) p.mesh.position.fromArray(cmd.position);
+      if(cmd.rotation) p.mesh.rotation.set(...cmd.rotation.map(THREE.MathUtils.degToRad));
+      if(cmd.scale) p.mesh.scale.fromArray(cmd.scale);
+      syncTransformFields();
+    }
+    else if(action==='material_selected'){
+      const p=currentPart(); if(p) agentApplyMaterial(p,cmd.material||cmd);
+    }
+  }
+  renderLayerList(); refreshUi(); syncTransformFields();
+  if(typeof fitSceneStraight==='function') fitSceneStraight('front'); else fitCameraToSelection();
+  return created;
+}
+
+async function runAgentPrompt(){
+  if(agentBusy) return;
+  const raw=($('agentPrompt')?.value||'').trim();
+  if(!raw){ agentSay('Escreva o que você quer criar ou alterar.','warn'); return; }
+  agentBusy=true; $('agentRunBtn').disabled=true; agentSay('Agente analisando o pedido...');
+  try{
+    let plan=null; const text=raw.toLowerCase();
+    if(raw.startsWith('{')||raw.startsWith('[')) plan=JSON.parse(raw);
+    else if(text.includes('casa')) plan=agentHousePlan(text);
+    else if(text.includes('prédio')||text.includes('predio')||text.includes('edifício')||text.includes('edificio')) plan=agentBuildingPlan(text);
+    else if(text.includes('esfera')) plan=[{type:'sphere',name:'Esfera do agente',radius:agentNum(text,/raio[^\d]*(\d+(?:[.,]\d+)?)/i,1),color:agentColor(text)}];
+    else if(text.includes('cilindro')) plan=[{type:'cylinder',name:'Cilindro do agente',radius:agentNum(text,/raio[^\d]*(\d+(?:[.,]\d+)?)/i,1),height:agentNum(text,/altura[^\d]*(\d+(?:[.,]\d+)?)/i,2),color:agentColor(text)}];
+    else if(text.includes('cubo')||text.includes('caixa')||text.includes('bloco')){
+      const s=agentNum(text,/(?:tamanho|lado)[^\d]*(\d+(?:[.,]\d+)?)/i,2);
+      plan=[{type:'box',name:'Bloco do agente',size:[s,s,s],color:agentColor(text)}];
+    }
+    else if(text.includes('duplique')||text.includes('duplicar')) plan=[{action:'duplicate_selected'}];
+    else if(text.includes('apague')||text.includes('exclua')||text.includes('delet')) plan=[{action:'delete_selected'}];
+    else if(text.includes('vista de cima')||text.includes('topo')) plan=[{action:'view',view:'top'}];
+    else if(text.includes('frente')) plan=[{action:'view',view:'front'}];
+    else throw new Error('Ainda não reconheço esse pedido no modo local. Tente casa, prédio, cubo, esfera, cilindro, duplicar, excluir ou use JSON.');
+    const created=await executeAgentPlan(plan);
+    agentSay(created?`Agente concluiu: ${created} camada${created===1?'':'s'} criada${created===1?'':'s'} e pronta${created===1?'':'s'} para editar.`:'Comando executado.','ok');
+  }catch(err){ console.error(err); agentSay('Agente: '+(err?.message||err),'error'); }
+  finally{ agentBusy=false; $('agentRunBtn').disabled=false; }
+}
+
+installAgent3DUI();
+document.title='COREL 3D GLB Studio V10.4 — Agente 3D';
+const agentVersion=document.querySelector('.brand small'); if(agentVersion) agentVersion.textContent='V10.4 • Agente 3D + GLB editável';
+agentSay('Agente 3D pronto • descreva uma peça, casa ou prédio.','ok');
