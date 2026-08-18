@@ -1,0 +1,119 @@
+// V10.6 — DELETE + ARRASTAR OBJETOS COM BOTÃO ESQUERDO
+let objectDragActive=false;
+let objectDragPointerId=null;
+let objectDragPlane=null;
+let objectDragStartPoint=null;
+let objectDragItems=[];
+let objectDragMoved=false;
+
+function isEditingField(){
+  const el=document.activeElement;
+  if(!el) return false;
+  const tag=(el.tagName||'').toLowerCase();
+  return tag==='input' || tag==='textarea' || tag==='select' || el.isContentEditable;
+}
+
+function deleteCurrentSelection(){
+  const ids = multiSelectedIds && multiSelectedIds.size
+    ? [...multiSelectedIds]
+    : (selectedPartId ? [selectedPartId] : []);
+  if(!ids.length) return;
+  const deletable=ids.filter(id=>{
+    const p=parts.find(x=>x.id===id);
+    return p && !p.locked;
+  });
+  if(!deletable.length){ setStatus('Os objetos selecionados estão bloqueados.','warn'); return; }
+
+  // Remove usando a rotina oficial do editor para liberar geometria/material corretamente.
+  deletable.forEach(id=>{ if(parts.some(p=>p.id===id)) deletePart(id); });
+  multiSelectedIds.clear();
+  selectedPartId=null;
+  renderLayerList(); refreshUi(); syncTransformFields(); refreshSelectionHelpers();
+  setStatus(`${deletable.length} objeto${deletable.length===1?'':'s'} apagado${deletable.length===1?'':'s'} com Delete.`, 'ok');
+}
+
+window.addEventListener('keydown',e=>{
+  if(e.key!=='Delete' || isEditingField()) return;
+  if(!selectedPartId && (!multiSelectedIds || !multiSelectedIds.size)) return;
+  e.preventDefault();
+  deleteCurrentSelection();
+});
+
+function pointerRayForDrag(e){
+  const rect=renderer.domElement.getBoundingClientRect();
+  const ndc=new THREE.Vector2(
+    ((e.clientX-rect.left)/rect.width)*2-1,
+    -((e.clientY-rect.top)/rect.height)*2+1
+  );
+  const ray=new THREE.Raycaster();
+  ray.setFromCamera(ndc,camera);
+  return ray.ray;
+}
+
+function beginObjectDrag(e,hit,part){
+  if(!part || part.locked || !part.visible) return false;
+
+  // Clicar em um objeto fora da multiseleção passa a selecionar só ele.
+  if(!multiSelectedIds.has(part.id)) setSingleSelectionNoCamera(part.id);
+
+  const ids=multiSelectedIds.size ? [...multiSelectedIds] : [part.id];
+  objectDragItems=ids.map(id=>parts.find(p=>p.id===id))
+    .filter(p=>p && p.visible && !p.locked)
+    .map(p=>({part:p,start:p.mesh.position.clone()}));
+  if(!objectDragItems.length) return false;
+
+  const normal=new THREE.Vector3();
+  camera.getWorldDirection(normal).normalize();
+  objectDragPlane=new THREE.Plane().setFromNormalAndCoplanarPoint(normal,hit.point);
+  objectDragStartPoint=hit.point.clone();
+  objectDragActive=true;
+  objectDragMoved=false;
+  objectDragPointerId=e.pointerId;
+  controls.enabled=false;
+  try{renderer.domElement.setPointerCapture(e.pointerId)}catch(_){}
+  return true;
+}
+
+renderer.domElement.addEventListener('pointerdown',e=>{
+  if(e.button!==0 || sculptEnabled || (typeof cutEnabled!=='undefined' && cutEnabled)) return;
+  if(e.shiftKey || e.ctrlKey || e.metaKey) return; // mantém multiseleção por modificador
+  const hits=intersectVisibleParts(e);
+  if(!hits.length) return; // vazio continua sendo caixa de seleção
+  const part=parts.find(p=>p.mesh===hits[0].object);
+  if(!part || part.locked) return;
+  if(beginObjectDrag(e,hits[0],part)){
+    e.preventDefault();
+    e.stopImmediatePropagation();
+  }
+},true);
+
+renderer.domElement.addEventListener('pointermove',e=>{
+  if(!objectDragActive || e.pointerId!==objectDragPointerId) return;
+  e.preventDefault(); e.stopImmediatePropagation();
+  const p=new THREE.Vector3();
+  if(!pointerRayForDrag(e).intersectPlane(objectDragPlane,p)) return;
+  const delta=p.clone().sub(objectDragStartPoint);
+  if(delta.lengthSq()>0.000001) objectDragMoved=true;
+  objectDragItems.forEach(item=>item.part.mesh.position.copy(item.start).add(delta));
+  syncTransformFields();
+  refreshSelectionHelpers();
+},true);
+
+function finishObjectDrag(e){
+  if(!objectDragActive || e.pointerId!==objectDragPointerId) return;
+  e.preventDefault(); e.stopImmediatePropagation();
+  objectDragActive=false;
+  objectDragPointerId=null;
+  objectDragPlane=null;
+  objectDragStartPoint=null;
+  controls.enabled=!(sculptEnabled);
+  syncTransformFields(); refreshSelectionHelpers();
+  if(objectDragMoved) setStatus(`${objectDragItems.length} objeto${objectDragItems.length===1?'':'s'} movido${objectDragItems.length===1?'':'s'} arrastando.`, 'ok');
+  objectDragItems=[];
+}
+renderer.domElement.addEventListener('pointerup',finishObjectDrag,true);
+renderer.domElement.addEventListener('pointercancel',finishObjectDrag,true);
+
+const v106=document.querySelector('.brand small');
+if(v106) v106.textContent='V10.6 • mover arrastando + Delete';
+document.title='COREL 3D GLB Studio V10.6 — Drag + Delete';
