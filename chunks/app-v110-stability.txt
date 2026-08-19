@@ -1,0 +1,169 @@
+// V10.10 — PENTE FINO / ESTABILIDADE
+// Corrige pressão de memória do histórico, redo por ação, importação multi-GLB e câmera.
+
+function v110SelectedIds(){
+  return (typeof multiSelectedIds!=='undefined' && multiSelectedIds.size)
+    ? [...multiSelectedIds]
+    : (selectedPartId ? [selectedPartId] : []);
+}
+
+function v110CaptureTransforms(ids=v110SelectedIds()){
+  return ids.map(id=>{
+    const p=parts.find(x=>x.id===id); if(!p) return null;
+    return {id,position:p.mesh.position.clone(),quaternion:p.mesh.quaternion.clone(),scale:p.mesh.scale.clone()};
+  }).filter(Boolean);
+}
+
+function v110ApplyTransforms(states){
+  (states||[]).forEach(s=>{
+    const p=parts.find(x=>x.id===s.id); if(!p) return;
+    p.mesh.position.copy(s.position); p.mesh.quaternion.copy(s.quaternion); p.mesh.scale.copy(s.scale); p.mesh.updateMatrixWorld(true);
+  });
+  if(states?.length){
+    selectedPartId=states[states.length-1].id;
+    if(typeof multiSelectedIds!=='undefined'){
+      multiSelectedIds.clear(); states.forEach(s=>{if(parts.some(p=>p.id===s.id)) multiSelectedIds.add(s.id);});
+    }
+  }
+  renderLayerList(); refreshUi(); syncTransformFields();
+  if(typeof refreshSelectionHelpers==='function') refreshSelectionHelpers();
+}
+
+function v110CaptureMesh(id=selectedPartId){
+  const p=parts.find(x=>x.id===id), g=p?.mesh?.geometry;
+  if(!p || !g?.attributes?.position) return null;
+  const color=g.getAttribute('color');
+  return {
+    id,
+    pos:g.attributes.position.array.slice(),
+    mask:g.userData.mask ? g.userData.mask.slice() : null,
+    cols:color ? color.array.slice() : null
+  };
+}
+
+function v110ApplyMesh(s){
+  if(!s) return;
+  const p=parts.find(x=>x.id===s.id), g=p?.mesh?.geometry; if(!p||!g) return;
+  if(g.attributes.position?.array?.length===s.pos.length){ g.attributes.position.array.set(s.pos); g.attributes.position.needsUpdate=true; }
+  if(s.mask) g.userData.mask=s.mask.slice();
+  const c=g.getAttribute('color'); if(s.cols && c?.array?.length===s.cols.length){ c.array.set(s.cols); c.needsUpdate=true; }
+  g.computeVertexNormals(); g.computeBoundingBox(); g.computeBoundingSphere();
+  selectedPartId=s.id;
+  if(typeof multiSelectedIds!=='undefined'){ multiSelectedIds.clear(); multiSelectedIds.add(s.id); }
+  renderLayerList(); refreshUi(); syncTransformFields();
+  if(typeof refreshSelectionHelpers==='function') refreshSelectionHelpers();
+}
+
+function v110DeleteIds(ids){
+  (ids||[]).forEach(id=>{ if(parts.some(p=>p.id===id)) deletePart(id); });
+  if(typeof multiSelectedIds!=='undefined') multiSelectedIds.clear();
+  if(selectedPartId && !parts.some(p=>p.id===selectedPartId)) selectedPartId=parts[0]?.id||null;
+  renderLayerList(); refreshUi(); syncTransformFields();
+  if(typeof refreshSelectionHelpers==='function') refreshSelectionHelpers();
+}
+
+// Substitui o wrapper pesado V10.9. Em movimentos, guarda só transforms; em malha, só a malha ativa.
+editorPushUndo=function(action){
+  if(!action || typeof action.undo!=='function') return;
+  const label=String(action.label||'alteração').toLowerCase();
+  action.v110Kind = /escultura|corte|malha/.test(label) ? 'mesh'
+    : /exclus/.test(label) ? 'delete'
+    : /movimento|transform|reset/.test(label) ? 'transform'
+    : 'generic';
+  if(action.v110Kind==='transform') action.v110Before=v110CaptureTransforms();
+  if(action.v110Kind==='mesh') action.v110Before=v110CaptureMesh();
+  if(action.v110Kind==='delete') action.v110Ids=v110SelectedIds();
+  editorRedoStack.length=0;
+  originalEditorPushUndoV109(action);
+  if(typeof logHistoryV109==='function') logHistoryV109(action.label||'alteração','do');
+};
+
+performEditorUndo=function(){
+  const action=editorUndoStack.pop();
+  if(!action){ setStatus('Nada para desfazer.','warn'); return; }
+  try{
+    if(action.beforeSnapshot){
+      // Fallback apenas para ações antigas/especiais (ex.: colar). Não é usado em setas/drag.
+      action.afterSnapshot=captureFullSceneSnapshot();
+      restoreFullSceneSnapshot(action.beforeSnapshot);
+    } else if(action.v110Kind==='transform'){
+      action.v110After=v110CaptureTransforms((action.v110Before||[]).map(s=>s.id));
+      action.undo();
+    } else if(action.v110Kind==='mesh'){
+      action.v110After=v110CaptureMesh(action.v110Before?.id||selectedPartId);
+      action.undo();
+    } else if(action.v110Kind==='delete'){
+      action.undo();
+    } else {
+      action.undo();
+    }
+    editorRedoStack.push(action);
+    if(editorRedoStack.length>12) editorRedoStack.shift();
+    if(typeof logHistoryV109==='function') logHistoryV109(action.label||'alteração','undo');
+    setStatus(`Ctrl+Z: ${action.label||'alteração'} desfeito.`,'ok');
+  }catch(err){ console.error('Ctrl+Z V10.10:',err); setStatus('Falha ao desfazer a última alteração.','error'); }
+};
+
+performEditorRedo=function(){
+  const action=editorRedoStack.pop();
+  if(!action){ setStatus('Nada para refazer.','warn'); return; }
+  try{
+    if(action.afterSnapshot){
+      restoreFullSceneSnapshot(action.afterSnapshot);
+    } else if(action.v110Kind==='transform' && action.v110After){
+      v110ApplyTransforms(action.v110After);
+    } else if(action.v110Kind==='mesh' && action.v110After){
+      v110ApplyMesh(action.v110After);
+    } else if(action.v110Kind==='delete' && action.v110Ids){
+      v110DeleteIds(action.v110Ids);
+    } else {
+      setStatus('Essa ação antiga não possui estado para refazer.','warn'); return;
+    }
+    editorUndoStack.push(action);
+    if(editorUndoStack.length>EDITOR_UNDO_LIMIT) editorUndoStack.shift();
+    if(typeof logHistoryV109==='function') logHistoryV109(action.label||'alteração','redo');
+    setStatus(`Ctrl+Y: ${action.label||'alteração'} refeito.`,'ok');
+  }catch(err){ console.error('Ctrl+Y V10.10:',err); setStatus('Falha ao refazer a alteração.','error'); }
+};
+
+// Atualiza os botões que foram ligados às funções antigas na V10.9.
+const undoBtnV110=document.getElementById('undoBtnV109'); if(undoBtnV110) undoBtnV110.onclick=performEditorUndo;
+const redoBtnV110=document.getElementById('redoBtnV109'); if(redoBtnV110) redoBtnV110.onclick=performEditorRedo;
+
+// Reinstala o importador GLB com múltiplos arquivos sem listeners duplicados e preservando a câmera.
+(function v110InstallCleanMultiGlb(){
+  const oldBtn=document.getElementById('importGlbBtn');
+  const oldInput=document.getElementById('glbInput');
+  if(!oldBtn || !oldInput) return;
+  const btn=oldBtn.cloneNode(true);
+  const input=oldInput.cloneNode(false);
+  input.id='glbInput'; input.type='file'; input.accept='.glb,model/gltf-binary'; input.multiple=true;
+  btn.id='importGlbBtn'; btn.textContent='Importar GLB(s)';
+  oldBtn.replaceWith(btn); oldInput.replaceWith(input);
+  btn.onclick=()=>{ input.value=''; input.click(); };
+  input.addEventListener('change',async()=>{
+    const files=[...(input.files||[])]; input.value=''; if(!files.length) return;
+    const cam={pos:camera.position.clone(),quat:camera.quaternion.clone(),up:camera.up.clone(),target:controls.target.clone()};
+    const beforeIds=new Set(parts.map(p=>p.id));
+    let ok=0, failed=0;
+    setStatus(`Importando ${files.length} GLB${files.length===1?'':'s'}...`);
+    for(const file of files){
+      const n0=parts.length;
+      try{ await importGlbFile(file); }catch(err){ console.error(err); }
+      if(parts.length>n0) ok++; else failed++;
+    }
+    camera.position.copy(cam.pos); camera.quaternion.copy(cam.quat); camera.up.copy(cam.up); controls.target.copy(cam.target); controls.update();
+    const added=parts.filter(p=>!beforeIds.has(p.id));
+    if(typeof multiSelectedIds!=='undefined' && added.length){ multiSelectedIds.clear(); added.forEach(p=>multiSelectedIds.add(p.id)); selectedPartId=added[added.length-1].id; }
+    renderLayerList(); refreshUi(); syncTransformFields();
+    if(typeof refreshSelectionHelpers==='function') refreshSelectionHelpers();
+    setStatus(failed?`${ok} GLB${ok===1?'':'s'} importado${ok===1?'':'s'}; ${failed} falhou${failed===1?'':'aram'}.`:`${ok} GLB${ok===1?'':'s'} adicionado${ok===1?'':'s'} à mesma edição sem alterar a câmera.`,failed?'warn':'ok');
+  });
+})();
+
+// Evita que o histórico cresça indefinidamente em sessões longas.
+if(editorUndoStack.length>20) editorUndoStack.splice(0,editorUndoStack.length-20);
+if(editorRedoStack.length>12) editorRedoStack.splice(0,editorRedoStack.length-12);
+
+const v110=document.querySelector('.brand small'); if(v110) v110.textContent='V10.10 • pente fino / estabilidade';
+document.title='COREL 3D GLB Studio V10.10 — Estabilidade';
