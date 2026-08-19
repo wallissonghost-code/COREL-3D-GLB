@@ -1,0 +1,82 @@
+// V10.7 — SETAS PARA MOVER + VÁRIOS GLBs NA MESMA EDIÇÃO
+function movableSelectionParts(){
+  const ids=(typeof multiSelectedIds!=='undefined' && multiSelectedIds.size)
+    ? [...multiSelectedIds]
+    : (selectedPartId ? [selectedPartId] : []);
+  return ids.map(id=>parts.find(p=>p.id===id)).filter(p=>p && p.visible && !p.locked);
+}
+
+function selectionMoveStep(items,fast=false){
+  const box=new THREE.Box3();
+  items.forEach(p=>box.expandByObject(p.mesh));
+  const size=box.isEmpty()?new THREE.Vector3(1,1,1):box.getSize(new THREE.Vector3());
+  const base=Math.max(size.x,size.y,size.z,1)*0.02;
+  return Math.min(Math.max(base,0.02),1.0)*(fast?5:1);
+}
+
+window.addEventListener('keydown',e=>{
+  if(!['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(e.key)) return;
+  if(typeof isEditingField==='function' && isEditingField()) return;
+  const items=movableSelectionParts();
+  if(!items.length) return;
+  e.preventDefault();
+
+  const step=selectionMoveStep(items,e.shiftKey);
+  const right=new THREE.Vector3(1,0,0).applyQuaternion(camera.quaternion).normalize();
+  const up=new THREE.Vector3(0,1,0).applyQuaternion(camera.quaternion).normalize();
+  const delta=new THREE.Vector3();
+  if(e.key==='ArrowLeft') delta.addScaledVector(right,-step);
+  if(e.key==='ArrowRight') delta.addScaledVector(right,step);
+  if(e.key==='ArrowUp') delta.addScaledVector(up,step);
+  if(e.key==='ArrowDown') delta.addScaledVector(up,-step);
+
+  items.forEach(p=>p.mesh.position.add(delta));
+  syncTransformFields();
+  if(typeof refreshSelectionHelpers==='function') refreshSelectionHelpers();
+  setStatus(`${items.length} objeto${items.length===1?'':'s'} movido${items.length===1?'':'s'} com as setas${e.shiftKey?' (rápido)':''}.`,'ok');
+});
+
+// Permite escolher vários .glb de uma vez sem substituir a cena atual.
+(function enableMultiGlbImport(){
+  const input=document.getElementById('glbInput');
+  const btn=document.getElementById('importGlbBtn');
+  if(!input || !btn) return;
+  input.multiple=true;
+  btn.textContent='Importar GLB(s)';
+  btn.title='Selecione um ou vários arquivos GLB; eles serão adicionados à cena atual.';
+
+  input.addEventListener('change',async e=>{
+    const files=[...(e.target.files||[])];
+    if(!files.length) return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    input.value='';
+    let ok=0;
+    setStatus(`Importando ${files.length} GLB${files.length===1?'':'s'} para a mesma edição...`);
+    for(const file of files){
+      try{
+        await importGlbFile(file);
+        ok++;
+      }catch(err){
+        console.error('Falha no GLB',file.name,err);
+      }
+    }
+    renderLayerList(); refreshUi(); syncTransformFields();
+    if(typeof refreshSelectionHelpers==='function') refreshSelectionHelpers();
+    setStatus(`${ok} de ${files.length} GLB${files.length===1?'':'s'} adicionado${ok===1?'':'s'} à mesma edição. Use GLB completo para exportar tudo junto.`,ok?'ok':'error');
+  },true);
+
+  const section=btn.closest('.section');
+  if(section && !document.getElementById('multiGlbHint')){
+    const hint=document.createElement('div');
+    hint.id='multiGlbHint';
+    hint.className='hintlabel';
+    hint.style.marginTop='6px';
+    hint.textContent='Pode selecionar vários GLBs de uma vez. Eles são adicionados ao projeto atual e podem ser posicionados juntos.';
+    btn.parentElement?.after(hint);
+  }
+})();
+
+const v107=document.querySelector('.brand small');
+if(v107) v107.textContent='V10.7 • setas + vários GLBs';
+document.title='COREL 3D GLB Studio V10.7 — Setas + Multi-GLB';
