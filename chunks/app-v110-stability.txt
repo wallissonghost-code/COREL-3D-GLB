@@ -72,7 +72,7 @@ editorPushUndo=function(action){
     : 'generic';
   if(action.v110Kind==='transform') action.v110Before=v110CaptureTransforms();
   if(action.v110Kind==='mesh') action.v110Before=v110CaptureMesh();
-  if(action.v110Kind==='delete') action.v110Ids=v110SelectedIds();
+  if(action.v110Kind==='delete') action.v110Ids=v110SelectedIds().filter(id=>{ const p=parts.find(x=>x.id===id); return p && !p.locked; });
   editorRedoStack.length=0;
   originalEditorPushUndoV109(action);
   if(typeof logHistoryV109==='function') logHistoryV109(action.label||'alteração','do');
@@ -157,7 +157,7 @@ const redoBtnV110=document.getElementById('redoBtnV109'); if(redoBtnV110) redoBt
     if(typeof multiSelectedIds!=='undefined' && added.length){ multiSelectedIds.clear(); added.forEach(p=>multiSelectedIds.add(p.id)); selectedPartId=added[added.length-1].id; }
     renderLayerList(); refreshUi(); syncTransformFields();
     if(typeof refreshSelectionHelpers==='function') refreshSelectionHelpers();
-    setStatus(failed?`${ok} GLB${ok===1?'':'s'} importado${ok===1?'':'s'}; ${failed} falhou${failed===1?'':'aram'}.`:`${ok} GLB${ok===1?'':'s'} adicionado${ok===1?'':'s'} à mesma edição sem alterar a câmera.`,failed?'warn':'ok');
+    setStatus(failed?`${ok} GLB${ok===1?'':'s'} importado${ok===1?'':'s'}; ${failed} ${failed===1?'falhou':'falharam'}.`:`${ok} GLB${ok===1?'':'s'} adicionado${ok===1?'':'s'} à mesma edição sem alterar a câmera.`,failed?'warn':'ok');
   });
 })();
 
