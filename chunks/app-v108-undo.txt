@@ -1,0 +1,173 @@
+// V10.8 — CTRL+Z UNIFICADO PARA ESCULTURA, CORTE, MOVE, SETAS, DELETE E TRANSFORM
+const editorUndoStack=[];
+const EDITOR_UNDO_LIMIT=30;
+
+function editorPushUndo(action){
+  if(!action || typeof action.undo!=='function') return;
+  editorUndoStack.push(action);
+  if(editorUndoStack.length>EDITOR_UNDO_LIMIT) editorUndoStack.shift();
+}
+
+function captureTransformUndo(label='movimento'){
+  const ids=(typeof multiSelectedIds!=='undefined' && multiSelectedIds.size)
+    ? [...multiSelectedIds]
+    : (selectedPartId ? [selectedPartId] : []);
+  const states=ids.map(id=>{
+    const p=parts.find(x=>x.id===id);
+    if(!p) return null;
+    return {id,position:p.mesh.position.clone(),quaternion:p.mesh.quaternion.clone(),scale:p.mesh.scale.clone()};
+  }).filter(Boolean);
+  if(!states.length) return null;
+  return {
+    label,
+    undo(){
+      states.forEach(s=>{
+        const p=parts.find(x=>x.id===s.id); if(!p) return;
+        p.mesh.position.copy(s.position);
+        p.mesh.quaternion.copy(s.quaternion);
+        p.mesh.scale.copy(s.scale);
+        p.mesh.updateMatrixWorld(true);
+      });
+      selectedPartId=states[states.length-1]?.id || selectedPartId;
+      if(typeof multiSelectedIds!=='undefined'){
+        multiSelectedIds.clear(); states.forEach(s=>multiSelectedIds.add(s.id));
+      }
+      renderLayerList(); refreshUi(); syncTransformFields();
+      if(typeof refreshSelectionHelpers==='function') refreshSelectionHelpers();
+    }
+  };
+}
+
+function cloneMaterialForUndo(mat){
+  if(Array.isArray(mat)) return mat.map(m=>m?.clone?m.clone():m);
+  return mat?.clone?mat.clone():mat;
+}
+
+function captureDeletedPartsUndo(ids){
+  const snapshots=ids.map(id=>{
+    const p=parts.find(x=>x.id===id); if(!p) return null;
+    return {
+      id:p.id,name:p.name,type:p.type,visible:p.visible,locked:p.locked,
+      geometry:p.mesh.geometry.clone(),material:cloneMaterialForUndo(p.mesh.material),
+      position:p.mesh.position.clone(),quaternion:p.mesh.quaternion.clone(),scale:p.mesh.scale.clone(),
+      baseGeometry:p.mesh.userData.baseGeometry?.clone?.() || p.mesh.geometry.clone(),
+      baseMask:p.mesh.userData.baseMask ? new Float32Array(p.mesh.userData.baseMask) : null
+    };
+  }).filter(Boolean);
+  if(!snapshots.length) return null;
+  return {
+    label:'exclusão',
+    undo(){
+      snapshots.forEach(s=>{
+        if(parts.some(p=>p.id===s.id)) return;
+        const mesh=new THREE.Mesh(s.geometry.clone(),cloneMaterialForUndo(s.material));
+        mesh.name=s.name;
+        mesh.position.copy(s.position); mesh.quaternion.copy(s.quaternion); mesh.scale.copy(s.scale);
+        mesh.visible=s.visible;
+        mesh.userData.baseGeometry=s.baseGeometry.clone();
+        mesh.userData.baseMask=s.baseMask ? new Float32Array(s.baseMask) : new Float32Array(mesh.geometry.attributes.position?.count||0);
+        scene.add(mesh);
+        parts.push({id:s.id,name:s.name,type:s.type,mesh,visible:s.visible,locked:s.locked});
+      });
+      selectedPartId=snapshots[snapshots.length-1]?.id || null;
+      if(typeof multiSelectedIds!=='undefined'){
+        multiSelectedIds.clear(); snapshots.forEach(s=>multiSelectedIds.add(s.id));
+      }
+      if(parts.length) $('empty').style.display='none';
+      renderLayerList(); refreshUi(); syncTransformFields();
+      if(typeof refreshSelectionHelpers==='function') refreshSelectionHelpers();
+    }
+  };
+}
+
+function captureMeshUndo(label='edição de malha'){
+  const part=currentPart(), mesh=currentMesh();
+  if(!part || !mesh?.geometry?.attributes?.position) return null;
+  const geom=mesh.geometry;
+  const pos=geom.attributes.position.array.slice();
+  const mask=geom.userData.mask ? geom.userData.mask.slice() : null;
+  const colorAttr=geom.getAttribute('color');
+  const cols=colorAttr ? colorAttr.array.slice() : null;
+  const id=part.id;
+  return {
+    label,
+    undo(){
+      const p=parts.find(x=>x.id===id); if(!p) return;
+      const g=p.mesh.geometry;
+      if(g.attributes.position?.array?.length===pos.length){
+        g.attributes.position.array.set(pos); g.attributes.position.needsUpdate=true;
+      }
+      if(mask) g.userData.mask=mask.slice();
+      const ca=g.getAttribute('color'); if(cols && ca?.array?.length===cols.length){ ca.array.set(cols); ca.needsUpdate=true; }
+      g.computeVertexNormals(); g.computeBoundingBox(); g.computeBoundingSphere();
+      selectedPartId=id;
+      renderLayerList(); refreshUi(); syncTransformFields();
+      if(typeof refreshSelectionHelpers==='function') refreshSelectionHelpers();
+    }
+  };
+}
+
+function performEditorUndo(){
+  const action=editorUndoStack.pop();
+  if(!action){ setStatus('Nada para desfazer.','warn'); return; }
+  try{
+    action.undo();
+    setStatus(`Ctrl+Z: ${action.label||'alteração'} desfeito.`, 'ok');
+  }catch(err){
+    console.error('Falha no Ctrl+Z:',err);
+    setStatus('Falha ao desfazer a última alteração.','error');
+  }
+}
+
+// Captura setas e Delete ANTES dos listeners existentes.
+window.addEventListener('keydown',e=>{
+  const target=e.target;
+  const tag=(target?.tagName||'').toLowerCase();
+  const editing=tag==='input'||tag==='textarea'||tag==='select'||target?.isContentEditable;
+  if((e.ctrlKey||e.metaKey) && !e.shiftKey && String(e.key).toLowerCase()==='z'){
+    if(editing) return;
+    e.preventDefault(); e.stopImmediatePropagation(); performEditorUndo(); return;
+  }
+  if(editing) return;
+  if(['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(e.key)){
+    const action=captureTransformUndo('movimento pelas setas'); if(action) editorPushUndo(action);
+  }else if(e.key==='Delete'){
+    const ids=(typeof multiSelectedIds!=='undefined' && multiSelectedIds.size)?[...multiSelectedIds]:(selectedPartId?[selectedPartId]:[]);
+    const action=captureDeletedPartsUndo(ids); if(action) editorPushUndo(action);
+  }
+},true);
+
+// Captura o estado antes de iniciar um arrasto de objeto.
+window.addEventListener('pointerdown',e=>{
+  if(e.button!==0 || (typeof sculptEnabled!=='undefined' && sculptEnabled) || (typeof cutEnabled!=='undefined' && cutEnabled)) return;
+  if(e.shiftKey||e.ctrlKey||e.metaKey) return;
+  try{
+    const hits=intersectVisibleParts(e);
+    if(!hits.length) return;
+    const part=parts.find(p=>p.mesh===hits[0].object);
+    if(!part || part.locked) return;
+    if(typeof multiSelectedIds!=='undefined' && !multiSelectedIds.has(part.id)){
+      const state={id:part.id,position:part.mesh.position.clone(),quaternion:part.mesh.quaternion.clone(),scale:part.mesh.scale.clone()};
+      editorPushUndo({label:'movimento arrastando',undo(){const p=parts.find(x=>x.id===state.id); if(!p)return; p.mesh.position.copy(state.position);p.mesh.quaternion.copy(state.quaternion);p.mesh.scale.copy(state.scale);selectedPartId=state.id;multiSelectedIds.clear();multiSelectedIds.add(state.id);renderLayerList();refreshUi();syncTransformFields();refreshSelectionHelpers();}});
+    }else{
+      const action=captureTransformUndo('movimento arrastando'); if(action) editorPushUndo(action);
+    }
+  }catch(_){ }
+},true);
+
+// Faz os strokes/corte também entrarem no Ctrl+Z global.
+const originalPushUndoV108=pushUndo;
+pushUndo=function(){
+  const action=captureMeshUndo(typeof cutEnabled!=='undefined'&&cutEnabled?'corte plano':'escultura');
+  if(action) editorPushUndo(action);
+  return originalPushUndoV108();
+};
+
+// Transformações por campos e reset entram no histórico.
+const originalApplyTransformV108=applyTransformFromFields;
+applyTransformFromFields=function(){ const a=captureTransformUndo('transformação'); if(a) editorPushUndo(a); return originalApplyTransformV108(); };
+const originalResetTransformV108=resetTransformFields;
+resetTransformFields=function(){ const a=captureTransformUndo('reset de transformação'); if(a) editorPushUndo(a); return originalResetTransformV108(); };
+
+const v108=document.querySelector('.brand small'); if(v108) v108.textContent='V10.8 • Ctrl+Z completo';
+document.title='COREL 3D GLB Studio V10.8 — Ctrl+Z completo';
