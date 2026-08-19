@@ -1,0 +1,196 @@
+// V10.9 — CTRL+Y/REDO + HISTÓRICO VISUAL + CTRL+C/CTRL+V
+const editorRedoStack=[];
+const editorHistoryLog=[];
+const EDITOR_REDO_LIMIT=30;
+let editorClipboard=[];
+
+function v109CloneMaterial(mat){
+  if(Array.isArray(mat)) return mat.map(m=>m?.clone?m.clone():m);
+  return mat?.clone?mat.clone():mat;
+}
+
+function captureFullSceneSnapshot(){
+  return {
+    selectedPartId,
+    selectedIds:(typeof multiSelectedIds!=='undefined')?[...multiSelectedIds]:[],
+    partIdSeed,
+    parts:parts.map(p=>({
+      id:p.id,name:p.name,type:p.type,visible:p.visible,locked:p.locked,
+      geometry:p.mesh.geometry.clone(),material:v109CloneMaterial(p.mesh.material),
+      position:p.mesh.position.clone(),quaternion:p.mesh.quaternion.clone(),scale:p.mesh.scale.clone(),
+      baseGeometry:p.mesh.userData.baseGeometry?.clone?.() || p.mesh.geometry.clone(),
+      baseMask:p.mesh.userData.baseMask ? new Float32Array(p.mesh.userData.baseMask) : null
+    }))
+  };
+}
+
+function disposePartV109(p){
+  scene.remove(p.mesh);
+  try{p.mesh.geometry?.dispose?.();}catch(_){}
+  const mats=Array.isArray(p.mesh.material)?p.mesh.material:[p.mesh.material];
+  mats.forEach(m=>{try{m?.dispose?.();}catch(_){}});
+}
+
+function restoreFullSceneSnapshot(snapshot){
+  if(!snapshot) return;
+  parts.slice().forEach(disposePartV109);
+  parts.length=0;
+  snapshot.parts.forEach(s=>{
+    const mesh=new THREE.Mesh(s.geometry.clone(),v109CloneMaterial(s.material));
+    mesh.name=s.name; mesh.castShadow=true; mesh.receiveShadow=true;
+    mesh.position.copy(s.position); mesh.quaternion.copy(s.quaternion); mesh.scale.copy(s.scale);
+    mesh.visible=s.visible;
+    mesh.userData.baseGeometry=s.baseGeometry.clone();
+    mesh.userData.baseMask=s.baseMask ? new Float32Array(s.baseMask) : new Float32Array(mesh.geometry.attributes.position?.count||0);
+    scene.add(mesh);
+    parts.push({id:s.id,name:s.name,type:s.type,mesh,visible:s.visible,locked:s.locked});
+  });
+  partIdSeed=Math.max(snapshot.partIdSeed||1,...parts.map(p=>(+p.id||0)+1),1);
+  selectedPartId=parts.some(p=>p.id===snapshot.selectedPartId)?snapshot.selectedPartId:(parts[0]?.id||null);
+  if(typeof multiSelectedIds!=='undefined'){
+    multiSelectedIds.clear();
+    (snapshot.selectedIds||[]).forEach(id=>{if(parts.some(p=>p.id===id)) multiSelectedIds.add(id);});
+    if(!multiSelectedIds.size && selectedPartId) multiSelectedIds.add(selectedPartId);
+  }
+  $('empty').style.display=parts.length?'none':'grid';
+  renderLayerList(); refreshUi(); syncTransformFields();
+  if(typeof refreshSelectionHelpers==='function') refreshSelectionHelpers();
+}
+
+function logHistoryV109(label,kind='do'){
+  const prefix=kind==='undo'?'↶':kind==='redo'?'↷':'•';
+  editorHistoryLog.unshift(`${prefix} ${label||'alteração'}`);
+  if(editorHistoryLog.length>20) editorHistoryLog.length=20;
+  renderHistoryV109();
+}
+
+function renderHistoryV109(){
+  const box=document.getElementById('historyListV109');
+  if(!box) return;
+  if(!editorHistoryLog.length){ box.innerHTML='<div class="hintlabel">Nenhuma ação ainda.</div>'; return; }
+  box.innerHTML=editorHistoryLog.map((x,i)=>`<div style="padding:6px 8px;border-bottom:1px solid rgba(255,255,255,.06);font-size:11px;opacity:${i?'.72':'1'}">${x}</div>`).join('');
+}
+
+// Envolve o histórico V10.8: cada ação ganha um snapshot completo antes da alteração.
+const originalEditorPushUndoV109=editorPushUndo;
+editorPushUndo=function(action){
+  if(!action) return;
+  if(!action.beforeSnapshot) action.beforeSnapshot=captureFullSceneSnapshot();
+  editorRedoStack.length=0;
+  originalEditorPushUndoV109(action);
+  logHistoryV109(action.label||'alteração','do');
+};
+
+performEditorUndo=function(){
+  const action=editorUndoStack.pop();
+  if(!action){ setStatus('Nada para desfazer.','warn'); return; }
+  try{
+    action.afterSnapshot=captureFullSceneSnapshot();
+    if(action.beforeSnapshot) restoreFullSceneSnapshot(action.beforeSnapshot);
+    else action.undo();
+    editorRedoStack.push(action);
+    if(editorRedoStack.length>EDITOR_REDO_LIMIT) editorRedoStack.shift();
+    logHistoryV109(action.label||'alteração','undo');
+    setStatus(`Ctrl+Z: ${action.label||'alteração'} desfeito.`, 'ok');
+  }catch(err){
+    console.error('Falha no Ctrl+Z V10.9:',err);
+    setStatus('Falha ao desfazer a última alteração.','error');
+  }
+};
+
+function performEditorRedo(){
+  const action=editorRedoStack.pop();
+  if(!action || !action.afterSnapshot){ setStatus('Nada para refazer.','warn'); return; }
+  try{
+    restoreFullSceneSnapshot(action.afterSnapshot);
+    editorUndoStack.push(action);
+    if(editorUndoStack.length>EDITOR_UNDO_LIMIT) editorUndoStack.shift();
+    logHistoryV109(action.label||'alteração','redo');
+    setStatus(`Ctrl+Y: ${action.label||'alteração'} refeito.`, 'ok');
+  }catch(err){
+    console.error('Falha no Ctrl+Y:',err);
+    setStatus('Falha ao refazer a alteração.','error');
+  }
+}
+
+function selectedPartsForClipboardV109(){
+  const ids=(typeof multiSelectedIds!=='undefined' && multiSelectedIds.size)?[...multiSelectedIds]:(selectedPartId?[selectedPartId]:[]);
+  return ids.map(id=>parts.find(p=>p.id===id)).filter(Boolean);
+}
+
+function copySelectionV109(){
+  const sel=selectedPartsForClipboardV109();
+  if(!sel.length){ setStatus('Selecione uma ou mais peças para copiar.','warn'); return; }
+  editorClipboard=sel.map(p=>({
+    name:p.name,type:p.type,visible:p.visible,locked:false,
+    geometry:p.mesh.geometry.clone(),material:v109CloneMaterial(p.mesh.material),
+    position:p.mesh.position.clone(),quaternion:p.mesh.quaternion.clone(),scale:p.mesh.scale.clone(),
+    baseGeometry:p.mesh.userData.baseGeometry?.clone?.()||p.mesh.geometry.clone(),
+    baseMask:p.mesh.userData.baseMask?new Float32Array(p.mesh.userData.baseMask):null
+  }));
+  setStatus(`${editorClipboard.length} objeto${editorClipboard.length===1?'':'s'} copiado${editorClipboard.length===1?'':'s'}. Ctrl+V para colar.`,'ok');
+}
+
+function pasteSelectionV109(){
+  if(!editorClipboard.length){ setStatus('Nada copiado para colar.','warn'); return; }
+  const action={label:'colar objetos',beforeSnapshot:captureFullSceneSnapshot(),undo(){}};
+  editorRedoStack.length=0;
+  originalEditorPushUndoV109(action);
+  logHistoryV109(action.label,'do');
+
+  const camPos=camera.position.clone(), camQuat=camera.quaternion.clone(), camUp=camera.up.clone(), camTarget=controls.target.clone();
+  const created=[];
+  editorClipboard.forEach((s,i)=>{
+    const part=createPartFromGeometry(s.geometry.clone(),`${s.name} cópia` ,s.type);
+    part.mesh.material.dispose?.();
+    part.mesh.material=v109CloneMaterial(s.material);
+    part.mesh.position.copy(s.position).add(new THREE.Vector3(0.18,0.18,0));
+    part.mesh.quaternion.copy(s.quaternion); part.mesh.scale.copy(s.scale);
+    part.visible=s.visible; part.mesh.visible=s.visible; part.locked=false;
+    part.mesh.userData.baseGeometry=s.baseGeometry.clone();
+    part.mesh.userData.baseMask=s.baseMask?new Float32Array(s.baseMask):new Float32Array(part.mesh.geometry.attributes.position?.count||0);
+    created.push(part);
+  });
+  camera.position.copy(camPos); camera.quaternion.copy(camQuat); camera.up.copy(camUp); controls.target.copy(camTarget); controls.update();
+  if(typeof multiSelectedIds!=='undefined'){
+    multiSelectedIds.clear(); created.forEach(p=>multiSelectedIds.add(p.id));
+  }
+  selectedPartId=created[created.length-1]?.id||selectedPartId;
+  renderLayerList(); refreshUi(); syncTransformFields();
+  if(typeof refreshSelectionHelpers==='function') refreshSelectionHelpers();
+  setStatus(`${created.length} objeto${created.length===1?'':'s'} colado${created.length===1?'':'s'}.`,'ok');
+}
+
+window.addEventListener('keydown',e=>{
+  const tag=(e.target?.tagName||'').toLowerCase();
+  const editing=tag==='input'||tag==='textarea'||tag==='select'||e.target?.isContentEditable;
+  if(editing) return;
+  const key=String(e.key).toLowerCase();
+  if((e.ctrlKey||e.metaKey) && (key==='y' || (e.shiftKey&&key==='z'))){
+    e.preventDefault(); e.stopImmediatePropagation(); performEditorRedo(); return;
+  }
+  if((e.ctrlKey||e.metaKey) && key==='c'){
+    e.preventDefault(); e.stopImmediatePropagation(); copySelectionV109(); return;
+  }
+  if((e.ctrlKey||e.metaKey) && key==='v'){
+    e.preventDefault(); e.stopImmediatePropagation(); pasteSelectionV109(); return;
+  }
+},true);
+
+(function installHistoryUiV109(){
+  if(document.getElementById('historyListV109')) return;
+  const sidebar=document.querySelector('.sidebar'); if(!sidebar) return;
+  const section=document.createElement('div'); section.className='section';
+  section.innerHTML=`<div class="section-title">HISTÓRICO</div>
+    <div class="row"><button id="undoBtnV109" class="secondary">↶ Desfazer</button><button id="redoBtnV109" class="secondary">↷ Refazer</button></div>
+    <div id="historyListV109" style="margin-top:8px;max-height:170px;overflow:auto;background:#0b0f15;border:1px solid var(--line);border-radius:10px"></div>
+    <div class="hintlabel">Ctrl+Z desfaz • Ctrl+Y refaz • Ctrl+C copia • Ctrl+V cola.</div>`;
+  const projectTitle=[...document.querySelectorAll('.section-title')].find(x=>x.textContent.includes('PROJETO EDITÁVEL'));
+  if(projectTitle?.parentElement) projectTitle.parentElement.after(section); else sidebar.prepend(section);
+  document.getElementById('undoBtnV109').onclick=performEditorUndo;
+  document.getElementById('redoBtnV109').onclick=performEditorRedo;
+  renderHistoryV109();
+})();
+
+const v109=document.querySelector('.brand small'); if(v109) v109.textContent='V10.9 • refazer + histórico + copiar/colar';
+document.title='COREL 3D GLB Studio V10.9 — Histórico + Copiar/Colar';
