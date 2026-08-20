@@ -1,0 +1,145 @@
+// V10.12 — CONTROLES MOBILE / TOQUE
+const v112IsTouch = matchMedia('(pointer: coarse)').matches || navigator.maxTouchPoints>0;
+let v112HoldTimer=null;
+
+function v112MobileParts(){
+  if(typeof v111SelectedParts==='function') return v111SelectedParts().filter(p=>p.visible&&!p.locked);
+  const ids=(typeof multiSelectedIds!=='undefined'&&multiSelectedIds.size)?[...multiSelectedIds]:(selectedPartId?[selectedPartId]:[]);
+  return ids.map(id=>parts.find(p=>p.id===id)).filter(p=>p&&p.visible&&!p.locked);
+}
+
+function v112MoveStep(items){
+  if(typeof v111SnapEnabled!=='undefined' && v111SnapEnabled) return Math.max(0.001,v111SnapStep||0.1);
+  if(typeof selectionMoveStep==='function') return selectionMoveStep(items,false);
+  const box=new THREE.Box3(); items.forEach(p=>box.expandByObject(p.mesh));
+  const size=box.isEmpty()?new THREE.Vector3(1,1,1):box.getSize(new THREE.Vector3());
+  return Math.min(Math.max(Math.max(size.x,size.y,size.z,1)*0.02,0.02),1);
+}
+
+function v112RecordMoveUndo(){
+  if(typeof captureTransformUndo==='function' && typeof editorPushUndo==='function'){
+    const a=captureTransformUndo('movimento mobile'); if(a) editorPushUndo(a);
+  }
+}
+
+function v112Nudge(dir,record=true){
+  const items=v112MobileParts(); if(!items.length){ if(record)setStatus('Selecione uma peça para mover.','warn'); return; }
+  if(record) v112RecordMoveUndo();
+  const step=v112MoveStep(items);
+  const right=new THREE.Vector3(1,0,0).applyQuaternion(camera.quaternion).normalize();
+  const up=new THREE.Vector3(0,1,0).applyQuaternion(camera.quaternion).normalize();
+  const forward=new THREE.Vector3(); camera.getWorldDirection(forward).normalize();
+  const delta=new THREE.Vector3();
+  if(dir==='left') delta.addScaledVector(right,-step);
+  if(dir==='right') delta.addScaledVector(right,step);
+  if(dir==='up') delta.addScaledVector(up,step);
+  if(dir==='down') delta.addScaledVector(up,-step);
+  if(dir==='front') delta.addScaledVector(forward,step);
+  if(dir==='back') delta.addScaledVector(forward,-step);
+  items.forEach(p=>{
+    p.mesh.position.add(delta);
+    if(typeof v111SnapEnabled!=='undefined' && v111SnapEnabled){
+      const s=Math.max(0.001,v111SnapStep||0.1);
+      p.mesh.position.x=Math.round(p.mesh.position.x/s)*s;
+      p.mesh.position.y=Math.round(p.mesh.position.y/s)*s;
+      p.mesh.position.z=Math.round(p.mesh.position.z/s)*s;
+    }
+    p.mesh.updateMatrixWorld(true);
+  });
+  syncTransformFields();
+  if(typeof refreshSelectionHelpers==='function') refreshSelectionHelpers();
+  if(typeof v111RefreshGizmo==='function') v111RefreshGizmo();
+}
+
+function v112BindHold(btn,dir){
+  const stop=()=>{ if(v112HoldTimer){clearInterval(v112HoldTimer);v112HoldTimer=null;} };
+  btn.addEventListener('pointerdown',e=>{
+    e.preventDefault(); e.stopPropagation(); stop();
+    v112Nudge(dir,true);
+    v112HoldTimer=setInterval(()=>v112Nudge(dir,false),120);
+    try{btn.setPointerCapture(e.pointerId)}catch(_){}
+  });
+  ['pointerup','pointercancel','lostpointercapture'].forEach(type=>btn.addEventListener(type,e=>{e.preventDefault();stop();}));
+}
+
+function v112SetMode(mode){
+  if(typeof v111SetMode==='function') v111SetMode(mode);
+  document.querySelectorAll('#v112MobilePanel [data-mode]').forEach(b=>b.classList.toggle('active',b.dataset.mode===mode));
+}
+
+(function v112InstallMobilePanel(){
+  if(!v112IsTouch || document.getElementById('v112MobilePanel')) return;
+  const style=document.createElement('style');
+  style.textContent=`
+    #v112MobilePanel{position:absolute;right:10px;bottom:max(10px,env(safe-area-inset-bottom));z-index:80;width:min(94vw,390px);padding:8px;border:1px solid rgba(255,255,255,.12);border-radius:15px;background:rgba(9,12,18,.88);backdrop-filter:blur(12px);box-shadow:0 8px 32px rgba(0,0,0,.35);touch-action:none}
+    #v112MobilePanel .v112modes,#v112MobilePanel .v112actions{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-bottom:6px}
+    #v112MobilePanel button{min-height:44px;padding:8px 7px;border-radius:10px;font-size:12px;touch-action:manipulation}
+    #v112MobilePanel .v112move{display:grid;grid-template-columns:repeat(5,1fr);gap:6px;align-items:center}
+    #v112MobilePanel .v112move button{font-size:18px;font-weight:900}
+    #v112MobilePanel .v112depth{font-size:11px!important;line-height:1.1}
+    #v112MobilePanel .v112mini{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-top:6px}
+    #v112MobilePanel .active{outline:2px solid rgba(98,216,255,.8);background:#1c2c3b}
+    @media(min-width:981px) and (pointer:fine){#v112MobilePanel{display:none}}
+    @media(max-width:540px){#v112MobilePanel{right:6px;left:6px;width:auto}#v112MobilePanel button{min-height:46px}.hint{bottom:205px}}
+  `;
+  document.head.appendChild(style);
+  const panel=document.createElement('div'); panel.id='v112MobilePanel';
+  panel.innerHTML=`
+    <div class="v112modes">
+      <button class="secondary active" data-mode="translate">Mover</button>
+      <button class="secondary" data-mode="rotate">Girar</button>
+      <button class="secondary" data-mode="scale">Escalar</button>
+    </div>
+    <div class="v112move">
+      <button id="v112Back" class="secondary v112depth">TRÁS</button>
+      <button id="v112Left" class="secondary">←</button>
+      <div style="display:grid;gap:5px"><button id="v112Up" class="secondary">↑</button><button id="v112Down" class="secondary">↓</button></div>
+      <button id="v112Right" class="secondary">→</button>
+      <button id="v112Front" class="secondary v112depth">FRENTE</button>
+    </div>
+    <div class="v112actions">
+      <button id="v112Group" class="secondary">Agrupar</button>
+      <button id="v112Ungroup" class="secondary">Desagrupar</button>
+      <button id="v112Snap" class="secondary">Snap</button>
+    </div>
+    <div class="v112mini">
+      <button id="v112Undo" class="secondary">↶</button>
+      <button id="v112Redo" class="secondary">↷</button>
+      <button id="v112Delete" class="danger">DEL</button>
+      <button id="v112Close" class="ghost">Ocultar</button>
+    </div>`;
+  stage.appendChild(panel);
+
+  panel.querySelectorAll('[data-mode]').forEach(b=>b.onclick=()=>v112SetMode(b.dataset.mode));
+  v112BindHold(document.getElementById('v112Left'),'left');
+  v112BindHold(document.getElementById('v112Right'),'right');
+  v112BindHold(document.getElementById('v112Up'),'up');
+  v112BindHold(document.getElementById('v112Down'),'down');
+  v112BindHold(document.getElementById('v112Front'),'front');
+  v112BindHold(document.getElementById('v112Back'),'back');
+  document.getElementById('v112Group').onclick=()=>typeof v111GroupSelection==='function'&&v111GroupSelection();
+  document.getElementById('v112Ungroup').onclick=()=>typeof v111UngroupSelection==='function'&&v111UngroupSelection();
+  document.getElementById('v112Snap').onclick=()=>{ if(typeof v111ToggleSnap==='function') v111ToggleSnap(); document.getElementById('v112Snap').classList.toggle('active',!!v111SnapEnabled); };
+  document.getElementById('v112Undo').onclick=()=>typeof performEditorUndo==='function'&&performEditorUndo();
+  document.getElementById('v112Redo').onclick=()=>typeof performEditorRedo==='function'&&performEditorRedo();
+  document.getElementById('v112Delete').onclick=()=>typeof deleteCurrentSelection==='function'&&deleteCurrentSelection();
+  document.getElementById('v112Close').onclick=()=>{panel.style.display='none'; v112ShowTab.style.display='block';};
+
+  const v112ShowTab=document.createElement('button');
+  v112ShowTab.id='v112ShowMobileTools'; v112ShowTab.className='primary'; v112ShowTab.textContent='Ferramentas';
+  v112ShowTab.style.cssText='display:none;position:absolute;right:8px;bottom:max(8px,env(safe-area-inset-bottom));z-index:81;padding:11px 13px;border-radius:12px';
+  v112ShowTab.onclick=()=>{panel.style.display='block';v112ShowTab.style.display='none';};
+  stage.appendChild(v112ShowTab);
+})();
+
+// Em tela touch, aumenta o gizmo para o dedo e reforça touch-action.
+if(v112IsTouch){
+  renderer.domElement.style.touchAction='none';
+  const v112GrowGizmo=()=>{ try{v111TransformControls?.setSize?.(1.28);}catch(_){} };
+  setTimeout(v112GrowGizmo,500);
+  setTimeout(v112GrowGizmo,1500);
+}
+
+const v112Brand=document.querySelector('.brand small');
+if(v112Brand) v112Brand.textContent='V10.12 • controles mobile + gizmo touch';
+document.title='COREL 3D GLB Studio V10.12 — Mobile Touch';
