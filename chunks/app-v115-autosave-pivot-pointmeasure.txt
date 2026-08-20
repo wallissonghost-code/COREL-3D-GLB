@@ -1,0 +1,180 @@
+// V10.15 — AUTOSAVE/RECUPERAÇÃO + PIVÔ + MEDIDOR DE 2 PONTOS
+const V115_DB='corel3d-autosave-v115';
+const V115_STORE='session';
+const V115_KEY='latest';
+let v115SaveTimer=null;
+let v115Saving=false;
+let v115Restoring=false;
+let v115MeasureMode=false;
+let v115MeasurePoints=[];
+let v115MeasureLine=null;
+let v115MeasureDots=[];
+
+function v115OpenDb(){
+  return new Promise((resolve,reject)=>{
+    const req=indexedDB.open(V115_DB,1);
+    req.onupgradeneeded=()=>{ if(!req.result.objectStoreNames.contains(V115_STORE)) req.result.createObjectStore(V115_STORE); };
+    req.onsuccess=()=>resolve(req.result); req.onerror=()=>reject(req.error);
+  });
+}
+function v115Tx(mode,fn){
+  return v115OpenDb().then(db=>new Promise((resolve,reject)=>{
+    const tx=db.transaction(V115_STORE,mode), store=tx.objectStore(V115_STORE);
+    let req; try{req=fn(store);}catch(e){db.close();reject(e);return;}
+    tx.oncomplete=()=>{db.close();resolve(req?.result);}; tx.onerror=()=>{db.close();reject(tx.error);};
+  }));
+}
+function v115MaterialData(mat){
+  const m=Array.isArray(mat)?mat[0]:mat;
+  return {
+    type:m?.type||'MeshStandardMaterial', color:m?.color?.getHex?.()??0x7c5cff,
+    roughness:Number.isFinite(m?.roughness)?m.roughness:.7, metalness:Number.isFinite(m?.metalness)?m.metalness:.04,
+    opacity:Number.isFinite(m?.opacity)?m.opacity:1, transparent:!!m?.transparent,
+    side:m?.side??THREE.FrontSide, vertexColors:m?.vertexColors!==false,
+    emissive:m?.emissive?.getHex?.()??0, emissiveIntensity:Number.isFinite(m?.emissiveIntensity)?m.emissiveIntensity:1
+  };
+}
+function v115MakeMaterial(d){
+  return new THREE.MeshStandardMaterial({color:d?.color??0x7c5cff,roughness:d?.roughness??.7,metalness:d?.metalness??.04,opacity:d?.opacity??1,transparent:!!d?.transparent,side:d?.side??THREE.FrontSide,vertexColors:d?.vertexColors!==false,emissive:d?.emissive??0,emissiveIntensity:d?.emissiveIntensity??1});
+}
+function v115GeometryData(g){
+  const attrs={};
+  for(const [name,a] of Object.entries(g.attributes||{})) attrs[name]={array:a.array.slice? a.array.slice():new a.array.constructor(a.array),itemSize:a.itemSize,normalized:!!a.normalized};
+  return {attrs,index:g.index?{array:g.index.array.slice?g.index.array.slice():new g.index.array.constructor(g.index.array)}:null,groups:(g.groups||[]).map(x=>({...x})),drawRange:{...g.drawRange},mask:g.userData?.mask?new Float32Array(g.userData.mask):null};
+}
+function v115GeometryFromData(d){
+  const g=new THREE.BufferGeometry();
+  for(const [name,a] of Object.entries(d?.attrs||{})) g.setAttribute(name,new THREE.BufferAttribute(a.array,a.itemSize,a.normalized));
+  if(d?.index?.array) g.setIndex(new THREE.BufferAttribute(d.index.array,1));
+  (d?.groups||[]).forEach(x=>g.addGroup(x.start,x.count,x.materialIndex));
+  if(d?.drawRange) g.setDrawRange(d.drawRange.start,d.drawRange.count);
+  if(d?.mask) g.userData.mask=new Float32Array(d.mask);
+  if(!g.getAttribute('normal')&&g.getAttribute('position')) g.computeVertexNormals();
+  initVertexAttributes(g); return g;
+}
+function v115SerializePart(p){
+  return {id:p.id,name:p.name,type:p.type,visible:p.visible,locked:p.locked,
+    geometry:v115GeometryData(p.mesh.geometry),baseGeometry:p.mesh.userData.baseGeometry?v115GeometryData(p.mesh.userData.baseGeometry):null,
+    baseMask:p.mesh.userData.baseMask?new Float32Array(p.mesh.userData.baseMask):null,material:v115MaterialData(p.mesh.material),
+    position:p.mesh.position.toArray(),quaternion:p.mesh.quaternion.toArray(),scale:p.mesh.scale.toArray(),
+    pivotLocal:Array.isArray(p.mesh.userData.v115PivotLocal)?p.mesh.userData.v115PivotLocal.slice():null,
+    editorGroup:p.mesh.userData.editorGroup||null};
+}
+function v115Snapshot(){
+  return {version:115,time:Date.now(),partIdSeed,selectedPartId,selectedIds:typeof multiSelectedIds!=='undefined'?[...multiSelectedIds]:[],
+    unitName:typeof v113UnitName!=='undefined'?v113UnitName:'cm',unitScale:typeof v113UnitScale!=='undefined'?v113UnitScale:1,
+    camera:{position:camera.position.toArray(),quaternion:camera.quaternion.toArray(),up:camera.up.toArray(),target:controls.target.toArray()},
+    parts:parts.map(v115SerializePart)};
+}
+async function v115SaveNow(silent=true){
+  if(v115Saving||v115Restoring) return; v115Saving=true;
+  try{await v115Tx('readwrite',s=>s.put(v115Snapshot(),V115_KEY)); if(!silent) setStatus('Sessão salva automaticamente neste dispositivo.','ok');}
+  catch(err){console.error('Autosave V10.15:',err); if(!silent)setStatus('Não foi possível salvar a sessão automática.','warn');}
+  finally{v115Saving=false; v115UpdateAutosaveLabel();}
+}
+function v115ScheduleSave(){ clearTimeout(v115SaveTimer); v115SaveTimer=setTimeout(()=>v115SaveNow(true),1800); }
+async function v115ReadSaved(){ try{return await v115Tx('readonly',s=>s.get(V115_KEY));}catch(_){return null;} }
+async function v115ClearSaved(){ try{await v115Tx('readwrite',s=>s.delete(V115_KEY)); v115UpdateAutosaveLabel(); setStatus('Autosave anterior apagado.','ok');}catch(_){setStatus('Falha ao apagar o autosave.','warn');} }
+function v115DisposeCurrent(){
+  parts.slice().forEach(p=>{scene.remove(p.mesh);try{p.mesh.geometry.dispose()}catch(_){};const ms=Array.isArray(p.mesh.material)?p.mesh.material:[p.mesh.material];ms.forEach(m=>{try{m?.dispose?.()}catch(_){}})}); parts.length=0;
+}
+async function v115Restore(snapshot,automatic=false){
+  if(!snapshot?.parts) return false; v115Restoring=true;
+  try{
+    v115DisposeCurrent();
+    for(const s of snapshot.parts){
+      const g=v115GeometryFromData(s.geometry), mat=v115MakeMaterial(s.material), mesh=new THREE.Mesh(g,mat);
+      mesh.name=s.name;mesh.castShadow=true;mesh.receiveShadow=true;mesh.position.fromArray(s.position);mesh.quaternion.fromArray(s.quaternion);mesh.scale.fromArray(s.scale);mesh.visible=s.visible!==false;
+      mesh.userData.baseGeometry=s.baseGeometry?v115GeometryFromData(s.baseGeometry):g.clone();
+      mesh.userData.baseMask=s.baseMask?new Float32Array(s.baseMask):new Float32Array(g.attributes.position?.count||0);
+      if(s.pivotLocal) mesh.userData.v115PivotLocal=s.pivotLocal.slice(); if(s.editorGroup)mesh.userData.editorGroup=s.editorGroup;
+      scene.add(mesh);parts.push({id:s.id,name:s.name,type:s.type,mesh,visible:s.visible!==false,locked:!!s.locked});
+    }
+    partIdSeed=Math.max(snapshot.partIdSeed||1,...parts.map(p=>(+p.id||0)+1),1); selectedPartId=parts.some(p=>p.id===snapshot.selectedPartId)?snapshot.selectedPartId:(parts[0]?.id||null);
+    if(typeof multiSelectedIds!=='undefined'){multiSelectedIds.clear();(snapshot.selectedIds||[]).forEach(id=>{if(parts.some(p=>p.id===id))multiSelectedIds.add(id)});if(!multiSelectedIds.size&&selectedPartId)multiSelectedIds.add(selectedPartId);}
+    if(snapshot.camera){camera.position.fromArray(snapshot.camera.position);camera.quaternion.fromArray(snapshot.camera.quaternion);camera.up.fromArray(snapshot.camera.up);controls.target.fromArray(snapshot.camera.target);controls.update();}
+    if(typeof v113UnitName!=='undefined'){v113UnitName=snapshot.unitName||'cm';v113UnitScale=snapshot.unitScale||1; const un=document.getElementById('v113UnitName'),us=document.getElementById('v113UnitScale');if(un)un.value=v113UnitName;if(us)us.value=v113UnitScale;}
+    $('empty').style.display=parts.length?'none':'grid';renderLayerList();refreshUi();syncTransformFields();if(typeof refreshSelectionHelpers==='function')refreshSelectionHelpers();if(typeof v111RefreshGizmo==='function')v111RefreshGizmo();if(typeof v113UpdateMeasure==='function')v113UpdateMeasure();
+    setStatus(automatic?'Sessão anterior recuperada automaticamente.':'Autosave recuperado.','ok'); return true;
+  }catch(err){console.error('Restore V10.15:',err);setStatus('Falha ao recuperar o autosave.','error');return false;}finally{v115Restoring=false;}
+}
+
+function v115SelectedSingle(){
+  const sel=typeof v111SelectedParts==='function'?v111SelectedParts():[]; return sel.length===1?sel[0]:null;
+}
+function v115WorldPivotForPart(p){
+  if(!p) return null; const local=p.mesh.userData.v115PivotLocal; if(Array.isArray(local)&&local.length===3)return p.mesh.localToWorld(new THREE.Vector3().fromArray(local));
+  return new THREE.Box3().setFromObject(p.mesh).getCenter(new THREE.Vector3());
+}
+const v115SelectionCenterOriginal=typeof v111SelectionCenter==='function'?v111SelectionCenter:null;
+if(v115SelectionCenterOriginal){
+  v111SelectionCenter=function(sel=v111SelectedParts()){
+    if(sel?.length===1){const wp=v115WorldPivotForPart(sel[0]);if(wp)return wp;}
+    return v115SelectionCenterOriginal(sel);
+  };
+}
+function v115SetPivotWorld(world,label='personalizado'){
+  const p=v115SelectedSingle(); if(!p){setStatus('Selecione exatamente 1 objeto para definir o pivô.','warn');return;}
+  p.mesh.updateMatrixWorld(true); const local=p.mesh.worldToLocal(world.clone()); p.mesh.userData.v115PivotLocal=local.toArray();
+  if(typeof v111RefreshGizmo==='function')v111RefreshGizmo(); v115ScheduleSave(); setStatus(`Pivô definido: ${label}.`,'ok');
+}
+function v115SetPivotPreset(mode){
+  const p=v115SelectedSingle();if(!p){setStatus('Selecione exatamente 1 objeto para definir o pivô.','warn');return;}
+  const b=new THREE.Box3().setFromObject(p.mesh),c=b.getCenter(new THREE.Vector3());
+  if(mode==='center')v115SetPivotWorld(c,'centro');
+  if(mode==='base')v115SetPivotWorld(new THREE.Vector3(c.x,c.y,b.min.z),'base');
+  if(mode==='top')v115SetPivotWorld(new THREE.Vector3(c.x,c.y,b.max.z),'topo');
+}
+function v115ResetPivot(){const p=v115SelectedSingle();if(!p)return;delete p.mesh.userData.v115PivotLocal;if(typeof v111RefreshGizmo==='function')v111RefreshGizmo();v115ScheduleSave();setStatus('Pivô voltou ao centro automático.','ok');}
+
+function v115UnitFactor(){return typeof v113UnitScale!=='undefined'?v113UnitScale:1;}
+function v115Unit(){return typeof v113UnitName!=='undefined'?v113UnitName:'cm';}
+function v115ClearMeasureVisual(){
+  if(v115MeasureLine){scene.remove(v115MeasureLine);v115MeasureLine.geometry.dispose();v115MeasureLine.material.dispose();v115MeasureLine=null;}
+  v115MeasureDots.forEach(x=>{scene.remove(x);x.geometry.dispose();x.material.dispose();});v115MeasureDots=[];
+}
+function v115UpdatePointMeasure(){
+  const out=document.getElementById('v115PointMeasureOut'); if(!out)return;
+  if(v115MeasurePoints.length<2){out.textContent=v115MeasurePoints.length?'Ponto 1 marcado — toque/clique no ponto 2.':'Marque dois pontos na superfície.';return;}
+  const d=v115MeasurePoints[0].distanceTo(v115MeasurePoints[1])*v115UnitFactor();out.textContent=`Distância: ${d.toFixed(3)} ${v115Unit()}`;
+}
+function v115RedrawMeasure(){
+  v115ClearMeasureVisual(); if(!v115MeasurePoints.length)return;
+  const dotGeo=()=>new THREE.SphereGeometry(Math.max(.018,camera.position.length()*.0025),12,8);
+  v115MeasurePoints.forEach(pt=>{const m=new THREE.MeshBasicMaterial({color:0xffd54a,depthTest:false});const o=new THREE.Mesh(dotGeo(),m);o.position.copy(pt);o.renderOrder=999;scene.add(o);v115MeasureDots.push(o);});
+  if(v115MeasurePoints.length===2){const g=new THREE.BufferGeometry().setFromPoints(v115MeasurePoints);const m=new THREE.LineBasicMaterial({color:0xffd54a,depthTest:false});v115MeasureLine=new THREE.Line(g,m);v115MeasureLine.renderOrder=998;scene.add(v115MeasureLine);}
+}
+function v115PickPoint(e){
+  const rect=renderer.domElement.getBoundingClientRect();pointer.x=((e.clientX-rect.left)/rect.width)*2-1;pointer.y=-((e.clientY-rect.top)/rect.height)*2+1;raycaster.setFromCamera(pointer,camera);
+  const meshes=parts.filter(p=>p.visible).map(p=>p.mesh);const hit=raycaster.intersectObjects(meshes,false)[0];if(!hit){setStatus('Toque/clique sobre uma superfície para marcar o ponto.','warn');return;}
+  if(v115MeasurePoints.length>=2)v115MeasurePoints=[];v115MeasurePoints.push(hit.point.clone());v115RedrawMeasure();v115UpdatePointMeasure();
+  if(v115MeasurePoints.length===2)setStatus(document.getElementById('v115PointMeasureOut')?.textContent||'Medição concluída.','ok');
+}
+function v115ToggleMeasure(){v115MeasureMode=!v115MeasureMode;const b=document.getElementById('v115MeasureBtn');if(b){b.classList.toggle('active',v115MeasureMode);b.textContent=v115MeasureMode?'Medidor ligado':'Medir 2 pontos';}const mb=document.getElementById('v115MobileMeasure');if(mb)mb.classList.toggle('active',v115MeasureMode);setStatus(v115MeasureMode?'Medidor: marque dois pontos na superfície.':'Medidor de pontos desligado.','ok');}
+function v115ClearMeasure(){v115MeasurePoints=[];v115ClearMeasureVisual();v115UpdatePointMeasure();}
+
+renderer.domElement.addEventListener('pointerdown',e=>{if(!v115MeasureMode)return;e.preventDefault();e.stopImmediatePropagation();v115PickPoint(e);},true);
+
+(function v115InstallUi(){
+  const sidebar=document.querySelector('.sidebar');if(!sidebar||document.getElementById('v115SessionSection'))return;
+  const s=document.createElement('div');s.className='section';s.id='v115SessionSection';s.innerHTML=`<div class="section-title">AUTOSAVE / RECUPERAÇÃO</div><div id="v115AutosaveLabel" class="value">Preparando autosave...</div><div class="row" style="margin-top:7px"><button id="v115SaveBtn" class="primary">Salvar agora</button><button id="v115RestoreBtn" class="secondary">Recuperar</button></div><div class="row" style="margin-top:6px"><button id="v115ClearSaveBtn" class="ghost">Apagar autosave</button><button id="v115NewBtn" class="secondary">Nova sessão</button></div><div class="hintlabel">Salvo localmente no dispositivo via IndexedDB.</div>`;
+  const proj=[...document.querySelectorAll('.section-title')].find(x=>x.textContent.includes('PROJETO EDITÁVEL'))?.parentElement;if(proj)proj.after(s);else sidebar.prepend(s);
+  const p=document.createElement('div');p.className='section';p.id='v115PivotSection';p.innerHTML=`<div class="section-title">PIVÔ / ORIGEM</div><div class="row3"><button id="v115PivotCenter" class="secondary">Centro</button><button id="v115PivotBase" class="secondary">Base</button><button id="v115PivotTop" class="secondary">Topo</button></div><div class="row" style="margin-top:6px"><button id="v115PivotCursor" class="secondary">Definir por toque</button><button id="v115PivotReset" class="ghost">Resetar pivô</button></div><div class="hintlabel">O pivô passa a ser o centro real de giro e escala do gizmo.</div><div class="section-title" style="margin-top:12px">MEDIDOR ENTRE 2 PONTOS</div><div class="row"><button id="v115MeasureBtn" class="secondary">Medir 2 pontos</button><button id="v115MeasureClear" class="ghost">Limpar</button></div><div id="v115PointMeasureOut" class="value" style="margin-top:7px">Marque dois pontos na superfície.</div>`;
+  const lay=document.getElementById('v113LayoutSection');if(lay)lay.after(p);else sidebar.appendChild(p);
+  document.getElementById('v115SaveBtn').onclick=()=>v115SaveNow(false);document.getElementById('v115RestoreBtn').onclick=async()=>{const x=await v115ReadSaved();if(x)await v115Restore(x,false);else setStatus('Nenhum autosave encontrado.','warn');};document.getElementById('v115ClearSaveBtn').onclick=v115ClearSaved;
+  document.getElementById('v115NewBtn').onclick=async()=>{v115DisposeCurrent();selectedPartId=null;if(typeof multiSelectedIds!=='undefined')multiSelectedIds.clear();$('empty').style.display='grid';renderLayerList();refreshUi();syncTransformFields();await v115ClearSaved();setStatus('Nova sessão iniciada.','ok');};
+  document.getElementById('v115PivotCenter').onclick=()=>v115SetPivotPreset('center');document.getElementById('v115PivotBase').onclick=()=>v115SetPivotPreset('base');document.getElementById('v115PivotTop').onclick=()=>v115SetPivotPreset('top');document.getElementById('v115PivotReset').onclick=v115ResetPivot;
+  document.getElementById('v115PivotCursor').onclick=()=>{v115MeasureMode=true;const old=v115PickPoint;setStatus('Pivô: toque/clique no ponto desejado da peça selecionada.','ok');const once=e=>{if(!v115SelectedSingle())return; e.preventDefault();e.stopImmediatePropagation();const rect=renderer.domElement.getBoundingClientRect();pointer.x=((e.clientX-rect.left)/rect.width)*2-1;pointer.y=-((e.clientY-rect.top)/rect.height)*2+1;raycaster.setFromCamera(pointer,camera);const p=v115SelectedSingle();const hit=raycaster.intersectObject(p.mesh,false)[0];if(hit){v115SetPivotWorld(hit.point,'toque/clique');renderer.domElement.removeEventListener('pointerdown',once,true);v115MeasureMode=false;}},true;renderer.domElement.addEventListener('pointerdown',once,true);};
+  document.getElementById('v115MeasureBtn').onclick=v115ToggleMeasure;document.getElementById('v115MeasureClear').onclick=v115ClearMeasure;
+})();
+async function v115UpdateAutosaveLabel(){const l=document.getElementById('v115AutosaveLabel');if(!l)return;const x=await v115ReadSaved();l.textContent=x?.time?`Último autosave: ${new Date(x.time).toLocaleString()}`:'Nenhum autosave salvo ainda.';}
+
+// Dispara autosave após as principais rotas de alteração e também periodicamente.
+const v115RenderOriginal=renderLayerList;renderLayerList=function(){const r=v115RenderOriginal();v115ScheduleSave();return r;};
+if(typeof editorPushUndo==='function'){const v115UndoPush=editorPushUndo;editorPushUndo=function(a){const r=v115UndoPush(a);setTimeout(v115ScheduleSave,0);return r;};}
+renderer.domElement.addEventListener('pointerup',v115ScheduleSave);window.addEventListener('keyup',v115ScheduleSave);document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='hidden')v115SaveNow(true);});window.addEventListener('beforeunload',()=>v115SaveNow(true));setInterval(()=>{if(parts.length)v115SaveNow(true);},20000);
+
+(function v115MobileExtras(){const panel=document.getElementById('v112MobilePanel');if(!panel)return;const row=document.createElement('div');row.className='v112mini';row.innerHTML='<button id="v115MobilePivot" class="secondary">Pivô base</button><button id="v115MobileMeasure" class="secondary">Medir</button><button id="v115MobileSave" class="secondary">Salvar</button><button id="v115MobileRestore" class="secondary">Recuperar</button>';panel.appendChild(row);document.getElementById('v115MobilePivot').onclick=()=>v115SetPivotPreset('base');document.getElementById('v115MobileMeasure').onclick=v115ToggleMeasure;document.getElementById('v115MobileSave').onclick=()=>v115SaveNow(false);document.getElementById('v115MobileRestore').onclick=async()=>{const x=await v115ReadSaved();if(x)await v115Restore(x,false);else setStatus('Nenhum autosave encontrado.','warn');};})();
+
+setTimeout(async()=>{v115UpdateAutosaveLabel();const saved=await v115ReadSaved();if(saved?.parts?.length&&parts.length===0&&Date.now()-saved.time<7*24*3600*1000)await v115Restore(saved,true);},900);
+const v115Brand=document.querySelector('.brand small');if(v115Brand)v115Brand.textContent='V10.15 • autosave + pivô + medidor 2 pontos';document.title='COREL 3D GLB Studio V10.15 — Autosave + Pivô + Medidor';
