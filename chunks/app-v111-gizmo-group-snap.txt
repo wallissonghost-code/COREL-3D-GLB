@@ -1,0 +1,228 @@
+// V10.11 — GIZMO + AGRUPAR/DESAGRUPAR + SNAP
+let v111TransformControls=null;
+let v111TransformMode='translate';
+let v111SnapEnabled=false;
+let v111SnapStep=0.10;
+let v111GroupSeed=1;
+const v111Groups=new Map();
+let v111GizmoStart=null;
+let v111Pivot=null;
+let v111GizmoBusy=false;
+
+function v111SelectedParts(){
+  const ids=(typeof multiSelectedIds!=='undefined' && multiSelectedIds.size)?[...multiSelectedIds]:(selectedPartId?[selectedPartId]:[]);
+  return ids.map(id=>parts.find(p=>p.id===id)).filter(Boolean);
+}
+
+function v111GroupIdsForPart(id){
+  for(const [gid,set] of v111Groups){ if(set.has(id)) return {gid,ids:[...set].filter(x=>parts.some(p=>p.id===x))}; }
+  return null;
+}
+
+function v111ExpandSelectionForGroups(){
+  if(typeof multiSelectedIds==='undefined' || !multiSelectedIds.size) return;
+  const out=new Set(multiSelectedIds);
+  [...out].forEach(id=>{
+    const g=v111GroupIdsForPart(id); if(g) g.ids.forEach(x=>out.add(x));
+  });
+  multiSelectedIds.clear(); out.forEach(id=>multiSelectedIds.add(id));
+  if(!selectedPartId || !multiSelectedIds.has(selectedPartId)) selectedPartId=[...multiSelectedIds][multiSelectedIds.size-1]||null;
+}
+
+function v111SelectGroupAware(id){
+  const g=v111GroupIdsForPart(id);
+  if(g && typeof multiSelectedIds!=='undefined'){
+    multiSelectedIds.clear(); g.ids.forEach(x=>multiSelectedIds.add(x)); selectedPartId=id;
+    renderLayerList(); refreshUi(); syncTransformFields(); if(typeof refreshSelectionHelpers==='function') refreshSelectionHelpers();
+  }
+}
+
+// Depois de qualquer seleção comum, expande automaticamente para o grupo.
+const v111SelectPartOriginal=selectPart;
+selectPart=function(id){ v111SelectPartOriginal(id); v111SelectGroupAware(id); v111RefreshGizmo(); };
+if(typeof setSingleSelectionNoCamera==='function'){
+  const v111SingleOriginal=setSingleSelectionNoCamera;
+  setSingleSelectionNoCamera=function(id){ v111SingleOriginal(id); v111SelectGroupAware(id); v111RefreshGizmo(); };
+}
+
+function v111GroupSelection(){
+  const sel=v111SelectedParts().filter(p=>p.visible);
+  if(sel.length<2){ setStatus('Selecione pelo menos 2 objetos para agrupar.','warn'); return; }
+  const ids=sel.map(p=>p.id);
+  // Remove os objetos de grupos antigos para evitar grupos sobrepostos.
+  for(const [gid,set] of [...v111Groups]){
+    ids.forEach(id=>set.delete(id));
+    if(set.size<2) v111Groups.delete(gid);
+  }
+  const gid='grupo-'+(v111GroupSeed++); v111Groups.set(gid,new Set(ids));
+  sel.forEach(p=>p.mesh.userData.editorGroup=gid);
+  if(typeof multiSelectedIds!=='undefined'){ multiSelectedIds.clear(); ids.forEach(id=>multiSelectedIds.add(id)); selectedPartId=ids[ids.length-1]; }
+  renderLayerList(); refreshUi(); if(typeof refreshSelectionHelpers==='function') refreshSelectionHelpers(); v111RefreshGizmo();
+  setStatus(`${ids.length} objetos agrupados. Ctrl+Shift+G desagrupa.`,'ok');
+}
+
+function v111UngroupSelection(){
+  const ids=new Set(v111SelectedParts().map(p=>p.id));
+  let count=0;
+  for(const [gid,set] of [...v111Groups]){
+    const touched=[...set].some(id=>ids.has(id)); if(!touched) continue;
+    [...set].forEach(id=>{ const p=parts.find(x=>x.id===id); if(p) delete p.mesh.userData.editorGroup; });
+    v111Groups.delete(gid); count++;
+  }
+  renderLayerList(); v111RefreshGizmo();
+  setStatus(count?`${count} grupo${count===1?'':'s'} desfeito${count===1?'':'s'}.`:'A seleção não pertence a um grupo.',count?'ok':'warn');
+}
+
+function v111SelectionCenter(sel=v111SelectedParts()){
+  const box=new THREE.Box3(); sel.forEach(p=>box.expandByObject(p.mesh));
+  return box.isEmpty()?new THREE.Vector3():box.getCenter(new THREE.Vector3());
+}
+
+function v111CaptureGizmoStart(){
+  const sel=v111SelectedParts().filter(p=>!p.locked&&p.visible);
+  const center=v111SelectionCenter(sel);
+  v111GizmoStart={center,pivotPos:v111Pivot.position.clone(),pivotQuat:v111Pivot.quaternion.clone(),pivotScale:v111Pivot.scale.clone(),items:sel.map(p=>({p,pos:p.mesh.position.clone(),quat:p.mesh.quaternion.clone(),scale:p.mesh.scale.clone()}))};
+  if(typeof captureTransformUndo==='function'){
+    const a=captureTransformUndo('gizmo de transformação'); if(a && typeof editorPushUndo==='function') editorPushUndo(a);
+  }
+}
+
+function v111ApplyGizmoDelta(){
+  if(!v111GizmoStart || !v111Pivot) return;
+  const s=v111GizmoStart;
+  const dPos=v111Pivot.position.clone().sub(s.pivotPos);
+  const invStartQ=s.pivotQuat.clone().invert();
+  const dQ=v111Pivot.quaternion.clone().multiply(invStartQ);
+  const dScale=new THREE.Vector3(
+    s.pivotScale.x? v111Pivot.scale.x/s.pivotScale.x:1,
+    s.pivotScale.y? v111Pivot.scale.y/s.pivotScale.y:1,
+    s.pivotScale.z? v111Pivot.scale.z/s.pivotScale.z:1
+  );
+  s.items.forEach(it=>{
+    if(v111TransformMode==='translate'){
+      it.p.mesh.position.copy(it.pos).add(dPos);
+    }else if(v111TransformMode==='rotate'){
+      const rel=it.pos.clone().sub(s.center).applyQuaternion(dQ);
+      it.p.mesh.position.copy(s.center).add(rel);
+      it.p.mesh.quaternion.copy(dQ).multiply(it.quat);
+    }else if(v111TransformMode==='scale'){
+      const rel=it.pos.clone().sub(s.center).multiply(dScale);
+      it.p.mesh.position.copy(s.center).add(rel);
+      it.p.mesh.scale.copy(it.scale).multiply(dScale);
+    }
+    it.p.mesh.updateMatrixWorld(true);
+  });
+  syncTransformFields(); if(typeof refreshSelectionHelpers==='function') refreshSelectionHelpers();
+}
+
+function v111RefreshGizmo(){
+  if(!v111TransformControls || !v111Pivot || v111GizmoBusy) return;
+  const sel=v111SelectedParts().filter(p=>p.visible&&!p.locked);
+  if(!sel.length){ v111TransformControls.detach(); return; }
+  const center=v111SelectionCenter(sel);
+  v111Pivot.position.copy(center); v111Pivot.quaternion.identity(); v111Pivot.scale.set(1,1,1); v111Pivot.updateMatrixWorld(true);
+  v111TransformControls.attach(v111Pivot);
+}
+
+async function v111InitTransformControls(){
+  try{
+    const {TransformControls}=await import('three/addons/controls/TransformControls.js');
+    v111Pivot=new THREE.Object3D(); scene.add(v111Pivot);
+    v111TransformControls=new TransformControls(camera,renderer.domElement);
+    const helper=v111TransformControls.getHelper?v111TransformControls.getHelper():v111TransformControls;
+    scene.add(helper);
+    v111TransformControls.setMode(v111TransformMode);
+    v111TransformControls.setSize?.(0.85);
+    v111TransformControls.addEventListener('dragging-changed',ev=>{
+      v111GizmoBusy=!!ev.value;
+      controls.enabled=!ev.value && !sculptEnabled;
+      if(ev.value) v111CaptureGizmoStart();
+      else { v111GizmoStart=null; v111RefreshGizmo(); }
+    });
+    v111TransformControls.addEventListener('objectChange',()=>{ if(v111GizmoBusy) v111ApplyGizmoDelta(); });
+    v111RefreshGizmo();
+  }catch(err){ console.error('TransformControls V10.11:',err); setStatus('Gizmo não pôde ser carregado; restante do editor continua disponível.','warn'); }
+}
+
+function v111SetMode(mode){
+  v111TransformMode=mode;
+  v111TransformControls?.setMode(mode);
+  ['translate','rotate','scale'].forEach(m=>document.getElementById('v111Mode'+m)?.classList.toggle('active',m===mode));
+  setStatus(`Gizmo: ${mode==='translate'?'mover':mode==='rotate'?'girar':'escalar'}.`,'ok');
+}
+
+function v111ApplySnapSettings(){
+  v111SnapStep=Math.max(0.001,parseFloat(document.getElementById('v111SnapStep')?.value)||0.1);
+  if(v111TransformControls){
+    v111TransformControls.setTranslationSnap(v111SnapEnabled?v111SnapStep:null);
+    v111TransformControls.setRotationSnap(v111SnapEnabled?THREE.MathUtils.degToRad(15):null);
+    v111TransformControls.setScaleSnap(v111SnapEnabled?v111SnapStep:null);
+  }
+}
+
+function v111ToggleSnap(){
+  v111SnapEnabled=!v111SnapEnabled; v111ApplySnapSettings();
+  const b=document.getElementById('v111SnapBtn'); if(b){b.classList.toggle('active',v111SnapEnabled);b.textContent=v111SnapEnabled?'Snap ligado':'Snap desligado';}
+  setStatus(`Snap ${v111SnapEnabled?'ativado':'desativado'} (${v111SnapStep}).`,'ok');
+}
+
+// Snap nas setas: intercepta antes da V10.7 quando ligado.
+window.addEventListener('keydown',e=>{
+  const tag=(e.target?.tagName||'').toLowerCase(); if(tag==='input'||tag==='textarea'||tag==='select'||e.target?.isContentEditable) return;
+  const key=String(e.key).toLowerCase();
+  if((e.ctrlKey||e.metaKey)&&key==='g'){
+    e.preventDefault(); e.stopImmediatePropagation(); if(e.shiftKey) v111UngroupSelection(); else v111GroupSelection(); return;
+  }
+  if(key==='w'){ e.preventDefault(); v111SetMode('translate'); return; }
+  if(key==='e'){ e.preventDefault(); v111SetMode('rotate'); return; }
+  if(key==='r'){ e.preventDefault(); v111SetMode('scale'); return; }
+  if(!v111SnapEnabled || !['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(e.key)) return;
+  const items=v111SelectedParts().filter(p=>p.visible&&!p.locked); if(!items.length) return;
+  e.preventDefault(); e.stopImmediatePropagation();
+  if(typeof captureTransformUndo==='function'){ const a=captureTransformUndo('movimento com snap'); if(a&&typeof editorPushUndo==='function') editorPushUndo(a); }
+  const step=v111SnapStep*(e.shiftKey?5:1);
+  const right=new THREE.Vector3(1,0,0).applyQuaternion(camera.quaternion).normalize();
+  const up=new THREE.Vector3(0,1,0).applyQuaternion(camera.quaternion).normalize();
+  const delta=new THREE.Vector3();
+  if(e.key==='ArrowLeft')delta.addScaledVector(right,-step); if(e.key==='ArrowRight')delta.addScaledVector(right,step);
+  if(e.key==='ArrowUp')delta.addScaledVector(up,step); if(e.key==='ArrowDown')delta.addScaledVector(up,-step);
+  items.forEach(p=>p.mesh.position.add(delta)); syncTransformFields(); if(typeof refreshSelectionHelpers==='function') refreshSelectionHelpers(); v111RefreshGizmo();
+},true);
+
+// Faz o arraste comum respeitar snap depois que o listener V10.6 atualiza a posição.
+renderer.domElement.addEventListener('pointermove',()=>{
+  if(!v111SnapEnabled || typeof objectDragActive==='undefined' || !objectDragActive || !Array.isArray(objectDragItems)) return;
+  objectDragItems.forEach(it=>{
+    const p=it.part?.mesh?.position; if(!p) return;
+    p.x=Math.round(p.x/v111SnapStep)*v111SnapStep; p.y=Math.round(p.y/v111SnapStep)*v111SnapStep; p.z=Math.round(p.z/v111SnapStep)*v111SnapStep;
+  });
+  syncTransformFields(); if(typeof refreshSelectionHelpers==='function') refreshSelectionHelpers();
+},true);
+
+(function v111InstallUi(){
+  if(document.getElementById('v111TransformSection')) return;
+  const sidebar=document.querySelector('.sidebar'); if(!sidebar) return;
+  const section=document.createElement('div'); section.className='section'; section.id='v111TransformSection';
+  section.innerHTML=`<div class="section-title">GIZMO / AGRUPAR / SNAP</div>
+    <div class="row3"><button id="v111Modetranslate" class="secondary active">Mover W</button><button id="v111Moderotate" class="secondary">Girar E</button><button id="v111Modescale" class="secondary">Escalar R</button></div>
+    <div class="row" style="margin-top:8px"><button id="v111GroupBtn" class="secondary">Agrupar Ctrl+G</button><button id="v111UngroupBtn" class="secondary">Desagrupar</button></div>
+    <div class="row" style="margin-top:8px"><button id="v111SnapBtn" class="secondary">Snap desligado</button><input id="v111SnapStep" type="number" min="0.001" step="0.05" value="0.10" title="Passo do snap"></div>
+    <div class="hintlabel">Gizmo XYZ na peça. W mover • E girar • R escalar • Ctrl+G agrupa • Ctrl+Shift+G desagrupa.</div>`;
+  const transformTitle=[...document.querySelectorAll('.section-title')].find(x=>x.textContent.includes('TRANSFORMAÇÃO DA CAMADA'));
+  if(transformTitle?.parentElement) transformTitle.parentElement.before(section); else sidebar.appendChild(section);
+  document.getElementById('v111Modetranslate').onclick=()=>v111SetMode('translate');
+  document.getElementById('v111Moderotate').onclick=()=>v111SetMode('rotate');
+  document.getElementById('v111Modescale').onclick=()=>v111SetMode('scale');
+  document.getElementById('v111GroupBtn').onclick=v111GroupSelection;
+  document.getElementById('v111UngroupBtn').onclick=v111UngroupSelection;
+  document.getElementById('v111SnapBtn').onclick=v111ToggleSnap;
+  document.getElementById('v111SnapStep').onchange=v111ApplySnapSettings;
+})();
+
+// Atualiza gizmo depois de ações que mudam a seleção/cena.
+const v111RenderLayerListOriginal=renderLayerList;
+renderLayerList=function(){ const r=v111RenderLayerListOriginal(); setTimeout(v111RefreshGizmo,0); return r; };
+
+v111InitTransformControls();
+const v111Brand=document.querySelector('.brand small'); if(v111Brand) v111Brand.textContent='V10.11 • gizmo + grupos + snap';
+document.title='COREL 3D GLB Studio V10.11 — Gizmo + Grupos + Snap';
