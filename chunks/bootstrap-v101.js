@@ -37,7 +37,7 @@ const optionalFiles = new Set([
 
 try {
   const loaded = await Promise.all(files.map(async name => {
-    const url = new URL(`${name}?v=122`, import.meta.url);
+    const url = new URL(`${name}?v=123`, import.meta.url);
     const response = await fetch(url, { cache: 'no-store' });
     if (!response.ok) throw new Error(`Falha ao carregar ${url.pathname}: HTTP ${response.status}`);
     return { name, code: await response.text() };
@@ -53,8 +53,6 @@ try {
       continue;
     }
     try {
-      // Apenas valida sintaxe. A execução real continua em um único eval para
-      // preservar o mesmo escopo lexical compartilhado entre todos os chunks.
       new Function(item.code);
       valid.push(item);
     } catch (syntaxError) {
