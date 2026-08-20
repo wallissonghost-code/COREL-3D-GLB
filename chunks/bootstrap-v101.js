@@ -22,12 +22,13 @@ const files = [
   'app-v109-redo-history-copy.txt',
   'app-v110-stability.txt',
   'app-v111-gizmo-group-snap.txt',
-  'app-v112-mobile-controls.txt'
+  'app-v112-mobile-controls.txt',
+  'app-v113-align-smartsnap-measure.txt'
 ];
 
 try {
   const code = (await Promise.all(files.map(async name => {
-    const url = new URL(`${name}?v=116`, import.meta.url);
+    const url = new URL(`${name}?v=117`, import.meta.url);
     const response = await fetch(url, { cache: 'no-store' });
     if (!response.ok) throw new Error(`Falha ao carregar ${url.pathname}: HTTP ${response.status}`);
     return await response.text();
