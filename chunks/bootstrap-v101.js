@@ -20,12 +20,13 @@ const files = [
   'app-v107-arrows-multiglb.txt',
   'app-v108-undo.txt',
   'app-v109-redo-history-copy.txt',
-  'app-v110-stability.txt'
+  'app-v110-stability.txt',
+  'app-v111-gizmo-group-snap.txt'
 ];
 
 try {
   const code = (await Promise.all(files.map(async name => {
-    const url = new URL(`${name}?v=114`, import.meta.url);
+    const url = new URL(`${name}?v=115`, import.meta.url);
     const response = await fetch(url, { cache: 'no-store' });
     if (!response.ok) throw new Error(`Falha ao carregar ${url.pathname}: HTTP ${response.status}`);
     return await response.text();
