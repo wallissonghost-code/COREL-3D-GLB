@@ -1,0 +1,182 @@
+// V10.13 — ALINHAR/DISTRIBUIR + SNAP INTELIGENTE + MEDIDAS REAIS
+let v113SmartSnap=false;
+let v113SmartTolerance=0.08;
+let v113UnitName='cm';
+let v113UnitScale=1;
+let v113GizmoSnapBound=false;
+
+function v113Selection(){
+  if(typeof v111SelectedParts==='function') return v111SelectedParts().filter(p=>p.visible&&!p.locked);
+  const ids=(typeof multiSelectedIds!=='undefined'&&multiSelectedIds.size)?[...multiSelectedIds]:(selectedPartId?[selectedPartId]:[]);
+  return ids.map(id=>parts.find(p=>p.id===id)).filter(p=>p&&p.visible&&!p.locked);
+}
+
+function v113BoxForPart(p){
+  p.mesh.updateMatrixWorld(true);
+  return new THREE.Box3().setFromObject(p.mesh);
+}
+
+function v113SelectionBox(sel=v113Selection()){
+  const box=new THREE.Box3(); sel.forEach(p=>box.union(v113BoxForPart(p))); return box;
+}
+
+function v113PushTransformUndo(label){
+  if(typeof captureTransformUndo==='function'&&typeof editorPushUndo==='function'){
+    const a=captureTransformUndo(label); if(a) editorPushUndo(a);
+  }
+}
+
+function v113AfterTransform(msg){
+  syncTransformFields();
+  if(typeof refreshSelectionHelpers==='function') refreshSelectionHelpers();
+  if(typeof v111RefreshGizmo==='function') v111RefreshGizmo();
+  v113UpdateMeasure();
+  if(msg) setStatus(msg,'ok');
+}
+
+function v113Align(axis,mode){
+  const sel=v113Selection(); if(sel.length<2){setStatus('Selecione pelo menos 2 objetos para alinhar.','warn');return;}
+  v113PushTransformUndo('alinhar objetos');
+  const boxes=sel.map(p=>({p,b:v113BoxForPart(p)}));
+  const overall=v113SelectionBox(sel); const center=overall.getCenter(new THREE.Vector3());
+  let target=mode==='min'?overall.min[axis]:mode==='max'?overall.max[axis]:center[axis];
+  boxes.forEach(({p,b})=>{
+    const c=b.getCenter(new THREE.Vector3())[axis];
+    const value=mode==='min'?b.min[axis]:mode==='max'?b.max[axis]:c;
+    p.mesh.position[axis]+=target-value;
+  });
+  v113AfterTransform(`${sel.length} objetos alinhados.`);
+}
+
+function v113Distribute(axis){
+  const sel=v113Selection(); if(sel.length<3){setStatus('Selecione pelo menos 3 objetos para distribuir.','warn');return;}
+  const entries=sel.map(p=>({p,c:v113BoxForPart(p).getCenter(new THREE.Vector3())[axis]})).sort((a,b)=>a.c-b.c);
+  const first=entries[0].c,last=entries[entries.length-1].c,step=(last-first)/(entries.length-1);
+  v113PushTransformUndo('distribuir objetos');
+  entries.forEach((e,i)=>{e.p.mesh.position[axis]+=first+step*i-e.c;});
+  v113AfterTransform(`${sel.length} objetos distribuídos igualmente.`);
+}
+
+function v113BestAxisSnap(selBox,targetBoxes,axis){
+  const sc=selBox.getCenter(new THREE.Vector3())[axis];
+  const svals=[selBox.min[axis],sc,selBox.max[axis]];
+  let best=null;
+  targetBoxes.forEach(tb=>{
+    const tc=tb.getCenter(new THREE.Vector3())[axis];
+    const tvals=[tb.min[axis],tc,tb.max[axis]];
+    svals.forEach(s=>tvals.forEach(t=>{
+      const d=t-s,ad=Math.abs(d);
+      if(ad<=v113SmartTolerance && (!best||ad<best.ad)) best={d,ad};
+    }));
+  });
+  return best?.d||0;
+}
+
+function v113ApplySmartSnap(source='movimento'){
+  if(!v113SmartSnap) return false;
+  const sel=v113Selection(); if(!sel.length) return false;
+  const ids=new Set(sel.map(p=>p.id));
+  const targets=parts.filter(p=>p.visible&&!ids.has(p.id)).map(v113BoxForPart);
+  if(!targets.length) return false;
+  const box=v113SelectionBox(sel);
+  const delta=new THREE.Vector3(
+    v113BestAxisSnap(box,targets,'x'),
+    v113BestAxisSnap(box,targets,'y'),
+    v113BestAxisSnap(box,targets,'z')
+  );
+  if(delta.lengthSq()<1e-12) return false;
+  v113PushTransformUndo('snap inteligente');
+  sel.forEach(p=>p.mesh.position.add(delta));
+  v113AfterTransform(`Snap inteligente: ${source} encaixado em outro objeto.`);
+  return true;
+}
+
+function v113ToggleSmartSnap(){
+  v113SmartSnap=!v113SmartSnap;
+  const b=document.getElementById('v113SmartSnapBtn'); if(b){b.classList.toggle('active',v113SmartSnap);b.textContent=v113SmartSnap?'Snap inteligente ligado':'Snap inteligente desligado';}
+  const mb=document.getElementById('v113MobileSmartSnap'); if(mb) mb.classList.toggle('active',v113SmartSnap);
+  setStatus(`Snap inteligente ${v113SmartSnap?'ativado':'desativado'}.`,'ok');
+}
+
+function v113UpdateMeasure(){
+  const out=document.getElementById('v113MeasureOut'); if(!out) return;
+  const sel=v113Selection(); if(!sel.length){out.textContent='Nenhuma seleção';return;}
+  const box=v113SelectionBox(sel),s=box.getSize(new THREE.Vector3());
+  const f=v113UnitScale;
+  out.textContent=`L ${ (s.x*f).toFixed(2) } ${v113UnitName} × A ${ (s.y*f).toFixed(2) } ${v113UnitName} × P ${ (s.z*f).toFixed(2) } ${v113UnitName}`;
+}
+
+function v113ReadUnits(){
+  v113UnitScale=Math.max(0.000001,parseFloat(document.getElementById('v113UnitScale')?.value)||1);
+  v113UnitName=document.getElementById('v113UnitName')?.value||'cm';
+  v113UpdateMeasure();
+}
+
+(function v113InstallUi(){
+  if(document.getElementById('v113LayoutSection')) return;
+  const sidebar=document.querySelector('.sidebar'); if(!sidebar) return;
+  const section=document.createElement('div'); section.className='section'; section.id='v113LayoutSection';
+  section.innerHTML=`<div class="section-title">ALINHAR / DISTRIBUIR / MEDIR</div>
+    <div class="row3"><button id="v113Left" class="secondary">Esquerda</button><button id="v113CenterX" class="secondary">Centro X</button><button id="v113Right" class="secondary">Direita</button></div>
+    <div class="row3" style="margin-top:6px"><button id="v113Bottom" class="secondary">Base</button><button id="v113CenterY" class="secondary">Centro Y</button><button id="v113Top" class="secondary">Topo</button></div>
+    <div class="row" style="margin-top:6px"><button id="v113DistX" class="secondary">Distribuir X</button><button id="v113DistY" class="secondary">Distribuir Y</button></div>
+    <div class="row" style="margin-top:8px"><button id="v113SmartSnapBtn" class="secondary">Snap inteligente desligado</button><input id="v113SmartTol" type="number" min="0.001" step="0.01" value="0.08" title="Distância máxima para encaixe"></div>
+    <div class="hintlabel">Snap inteligente aproxima bordas, centros e faces quando estão perto.</div>
+    <div class="field" style="margin-top:8px"><label>Escala real: 1 unidade da cena =</label><div class="row"><input id="v113UnitScale" type="number" min="0.000001" step="0.1" value="1"><select id="v113UnitName"><option>mm</option><option selected>cm</option><option>m</option></select></div></div>
+    <div id="v113MeasureOut" class="value" style="margin-top:7px">Nenhuma seleção</div>`;
+  const gizmo=document.getElementById('v111TransformSection');
+  if(gizmo) gizmo.after(section); else sidebar.appendChild(section);
+  document.getElementById('v113Left').onclick=()=>v113Align('x','min');
+  document.getElementById('v113CenterX').onclick=()=>v113Align('x','center');
+  document.getElementById('v113Right').onclick=()=>v113Align('x','max');
+  document.getElementById('v113Bottom').onclick=()=>v113Align('y','min');
+  document.getElementById('v113CenterY').onclick=()=>v113Align('y','center');
+  document.getElementById('v113Top').onclick=()=>v113Align('y','max');
+  document.getElementById('v113DistX').onclick=()=>v113Distribute('x');
+  document.getElementById('v113DistY').onclick=()=>v113Distribute('y');
+  document.getElementById('v113SmartSnapBtn').onclick=v113ToggleSmartSnap;
+  document.getElementById('v113SmartTol').onchange=e=>{v113SmartTolerance=Math.max(.001,+e.target.value||.08);};
+  document.getElementById('v113UnitScale').onchange=v113ReadUnits;
+  document.getElementById('v113UnitName').onchange=v113ReadUnits;
+})();
+
+// Aplica snap ao terminar arraste comum.
+renderer.domElement.addEventListener('pointerup',()=>setTimeout(()=>{
+  if(v113SmartSnap && typeof objectDragMoved!=='undefined' && objectDragMoved){ v113ApplySmartSnap('arraste'); objectDragMoved=false; }
+},0));
+
+// Aplica snap após movimento por setas.
+window.addEventListener('keyup',e=>{
+  if(v113SmartSnap&&['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(e.key)) v113ApplySmartSnap('setas');
+});
+
+// Quando TransformControls terminar um gesto, encaixa uma vez, sem brigar durante o drag.
+const v113BindGizmo=setInterval(()=>{
+  if(v113GizmoSnapBound||typeof v111TransformControls==='undefined'||!v111TransformControls) return;
+  v113GizmoSnapBound=true; clearInterval(v113BindGizmo);
+  v111TransformControls.addEventListener('dragging-changed',ev=>{if(!ev.value&&v113SmartSnap)setTimeout(()=>v113ApplySmartSnap('gizmo'),0);});
+},250);
+setTimeout(()=>clearInterval(v113BindGizmo),10000);
+
+// Integra com os nudges do painel mobile.
+if(typeof v112Nudge==='function'){
+  const v113NudgeOriginal=v112Nudge;
+  v112Nudge=function(dir,record=true){const r=v113NudgeOriginal(dir,record); if(record&&v113SmartSnap)setTimeout(()=>v113ApplySmartSnap('mobile'),0); return r;};
+}
+
+// Atalhos mobile extras dentro do painel existente.
+(function v113MobileExtras(){
+  const panel=document.getElementById('v112MobilePanel'); if(!panel) return;
+  const row=document.createElement('div'); row.className='v112mini';
+  row.innerHTML='<button id="v113MobileAlign" class="secondary">Alinhar X</button><button id="v113MobileDist" class="secondary">Distribuir</button><button id="v113MobileSmartSnap" class="secondary">Snap Obj.</button><button id="v113MobileMeasure" class="secondary">Medidas</button>';
+  panel.appendChild(row);
+  document.getElementById('v113MobileAlign').onclick=()=>v113Align('x','center');
+  document.getElementById('v113MobileDist').onclick=()=>v113Distribute('x');
+  document.getElementById('v113MobileSmartSnap').onclick=v113ToggleSmartSnap;
+  document.getElementById('v113MobileMeasure').onclick=()=>{v113UpdateMeasure();document.getElementById('v113LayoutSection')?.scrollIntoView({behavior:'smooth',block:'center'});};
+})();
+
+setInterval(v113UpdateMeasure,500);
+v113UpdateMeasure();
+const v113Brand=document.querySelector('.brand small'); if(v113Brand) v113Brand.textContent='V10.13 • alinhar + snap inteligente + medidas';
+document.title='COREL 3D GLB Studio V10.13 — Alinhar + Snap + Medidas';
