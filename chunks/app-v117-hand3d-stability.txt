@@ -1,0 +1,172 @@
+// V10.17 — PENTE FINO / ESTABILIDADE HAND 3D
+// Corrige perda de mão, suaviza landmarks, reduz carga mobile e preserva estado dos controles.
+let v117SmoothedLandmarks=null;
+let v117LastFrameAt=0;
+let v117LostAt=0;
+let v117StartBusy=false;
+let v117ControlsBeforeGesture=true;
+const V117_LOST_GRACE_MS=420;
+const V117_SMOOTH=0.42;
+const V117_FRAME_MS=(matchMedia('(pointer: coarse)').matches||navigator.maxTouchPoints>0)?50:40;
+
+function v117SafeDrawHand(lm){
+  if(!v116Ctx||!v116Canvas) return;
+  const w=v116Canvas.width,h=v116Canvas.height;
+  v116Ctx.clearRect(0,0,w,h);
+  if(!Array.isArray(lm)||lm.length<21) return;
+  const links=[[0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],[5,9],[9,10],[10,11],[11,12],[9,13],[13,14],[14,15],[15,16],[13,17],[17,18],[18,19],[19,20],[0,17]];
+  v116Ctx.lineWidth=3;
+  v116Ctx.strokeStyle='rgba(90,220,255,.9)';
+  for(const [a,b] of links){
+    const A=lm[a],B=lm[b]; if(!A||!B) continue;
+    v116Ctx.beginPath();
+    v116Ctx.moveTo((1-A.x)*w,A.y*h);
+    v116Ctx.lineTo((1-B.x)*w,B.y*h);
+    v116Ctx.stroke();
+  }
+  lm.forEach((p,i)=>{
+    if(!p) return;
+    v116Ctx.beginPath();
+    v116Ctx.fillStyle=(i===4||i===8)?'#fff36a':'#78e6ff';
+    v116Ctx.arc((1-p.x)*w,p.y*h,(i===4||i===8)?6:4,0,Math.PI*2);
+    v116Ctx.fill();
+  });
+}
+v116DrawHand=v117SafeDrawHand;
+
+function v117SmoothLandmarks(lm){
+  if(!Array.isArray(lm)||lm.length<21){v117SmoothedLandmarks=null;return null;}
+  if(!v117SmoothedLandmarks){
+    v117SmoothedLandmarks=lm.map(p=>({x:p.x,y:p.y,z:p.z}));
+    return v117SmoothedLandmarks;
+  }
+  for(let i=0;i<21;i++){
+    const src=lm[i],dst=v117SmoothedLandmarks[i];
+    dst.x+= (src.x-dst.x)*V117_SMOOTH;
+    dst.y+= (src.y-dst.y)*V117_SMOOTH;
+    dst.z+= (src.z-dst.z)*V117_SMOOTH;
+  }
+  return v117SmoothedLandmarks;
+}
+
+const v117BeginOriginal=v116BeginGesture;
+v116BeginGesture=function(tip,thumb){
+  v117ControlsBeforeGesture=controls.enabled;
+  const ok=v117BeginOriginal(tip,thumb);
+  if(!ok) controls.enabled=v117ControlsBeforeGesture;
+  return ok;
+};
+
+v116EndGesture=function(){
+  if(!v116Pinching) return;
+  v116Pinching=false;
+  v116GestureStart=null;
+  controls.enabled=v117ControlsBeforeGesture && !sculptEnabled;
+  if(typeof v113SmartSnap!=='undefined'&&v113SmartSnap&&typeof v113ApplySmartSnap==='function'){
+    setTimeout(()=>v113ApplySmartSnap('Hand 3D'),0);
+  }
+};
+
+v116OnResults=function(results){
+  if(!v116HandEnabled) return;
+  const raw=results?.multiHandLandmarks?.[0];
+  const state=document.getElementById('v116HandState');
+  if(!raw||raw.length<21){
+    v116DrawHand(null);
+    if(v116Cursor) v116Cursor.style.display='none';
+    if(!v117LostAt) v117LostAt=performance.now();
+    if(performance.now()-v117LostAt>V117_LOST_GRACE_MS) v116EndGesture();
+    if(state) state.textContent='👀 procurando mão...';
+    return;
+  }
+  v117LostAt=0;
+  v116LastSeen=Date.now();
+  const lm=v117SmoothLandmarks(raw);
+  v116DrawHand(lm);
+  const thumb=lm[4],tip=lm[8];
+  // Distância relativa à largura da palma reduz falsos positivos quando a mão aproxima/afasta da câmera.
+  const palm=Math.max(.025,Math.hypot(lm[5].x-lm[17].x,lm[5].y-lm[17].y,lm[5].z-lm[17].z));
+  const pinch=Math.hypot(tip.x-thumb.x,tip.y-thumb.y,tip.z-thumb.z)/palm;
+  const on=.43,off=.58;
+  const pinching=v116Pinching?pinch<off:pinch<on;
+  v116UpdateCursor(tip,pinching);
+  if(pinching&&!v116Pinching) v116BeginGesture(tip,thumb);
+  if(pinching&&v116Pinching) v116ApplyGesture(tip,thumb);
+  if(!pinching&&v116Pinching) v116EndGesture();
+  if(state) state.textContent=pinching?'✊ PINÇA / PEÇA AGARRADA':'✋ mão detectada — junte indicador + polegar';
+};
+
+v116Loop=async function(t){
+  if(!v116HandEnabled) return;
+  requestAnimationFrame(v116Loop);
+  if(document.hidden||v116Processing||!v116Video||v116Video.readyState<2||t-v117LastFrameAt<V117_FRAME_MS) return;
+  v117LastFrameAt=t;
+  v116Processing=true;
+  try{await v116Hands?.send?.({image:v116Video});}
+  catch(err){console.warn('Hand 3D frame:',err);}
+  finally{v116Processing=false;}
+};
+
+const v117StartOriginal=v116Start;
+v116Start=async function(){
+  if(v116HandEnabled||v117StartBusy) return;
+  v117StartBusy=true;
+  const b=document.getElementById('v116Toggle');
+  if(b){b.disabled=true;b.textContent='Iniciando Hand 3D...';}
+  try{
+    await v117StartOriginal();
+    // Mobile: modelo leve para evitar aquecimento/travadas; desktop mantém maior precisão.
+    if(v116Hands){
+      const touch=matchMedia('(pointer: coarse)').matches||navigator.maxTouchPoints>0;
+      v116Hands.setOptions({maxNumHands:1,modelComplexity:touch?0:1,minDetectionConfidence:.62,minTrackingConfidence:.58});
+    }
+  }finally{
+    v117StartBusy=false;
+    if(b){b.disabled=false;b.textContent=v116HandEnabled?'Desativar Hand 3D':'Ativar câmera / Hand 3D';}
+  }
+};
+
+const v117StopOriginal=v116Stop;
+v116Stop=function(){
+  const hands=v116Hands;
+  v117StopOriginal();
+  v117SmoothedLandmarks=null;
+  v117LostAt=0;
+  v116Processing=false;
+  v116LastSend=0;
+  v117LastFrameAt=0;
+  // Libera WASM/WebGL do MediaPipe para ligar/desligar várias vezes sem acumular memória.
+  try{hands?.close?.();}catch(_){}
+  v116Hands=null;
+  if(v116Ctx&&v116Canvas) v116Ctx.clearRect(0,0,v116Canvas.width,v116Canvas.height);
+};
+
+// O onclick original guardou a função antiga; rebinda para as versões corrigidas.
+const v117Toggle=document.getElementById('v116Toggle');
+if(v117Toggle) v117Toggle.onclick=()=>v116HandEnabled?v116Stop():v116Start();
+
+// Pausa inferência em segundo plano e encerra a câmera ao sair definitivamente.
+document.addEventListener('visibilitychange',()=>{
+  if(document.hidden&&v116Pinching) v116EndGesture();
+});
+addEventListener('pagehide',()=>{if(v116HandEnabled)v116Stop();},{once:true});
+
+// Impede que o preview cubra o painel principal em celulares baixos.
+const v117Style=document.createElement('style');
+v117Style.textContent=`
+@media(max-width:620px){
+  #v116HandCard{width:156px;bottom:max(218px,calc(env(safe-area-inset-bottom) + 208px))}
+  #v116HandPreview{aspect-ratio:4/3}
+  #v116HandCard .modes button{min-height:32px;padding:5px 3px}
+}
+@media(max-height:650px) and (max-width:620px){
+  #v116HandCard{width:132px;bottom:205px}
+  #v116HandState{display:none}
+}
+`;
+document.head.appendChild(v117Style);
+
+const v117Brand=document.querySelector('.brand small');
+if(v117Brand) v117Brand.textContent='V10.17 • Hand 3D pente fino / estabilidade';
+document.title='COREL 3D GLB Studio V10.17 — Hand 3D Estável';
+setStatus('V10.17: Hand 3D revisado — pinça estável, menor carga e câmera segura.','ok');
