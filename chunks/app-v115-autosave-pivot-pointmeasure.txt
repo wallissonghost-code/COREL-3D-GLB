@@ -164,7 +164,26 @@ renderer.domElement.addEventListener('pointerdown',e=>{if(!v115MeasureMode)retur
   document.getElementById('v115SaveBtn').onclick=()=>v115SaveNow(false);document.getElementById('v115RestoreBtn').onclick=async()=>{const x=await v115ReadSaved();if(x)await v115Restore(x,false);else setStatus('Nenhum autosave encontrado.','warn');};document.getElementById('v115ClearSaveBtn').onclick=v115ClearSaved;
   document.getElementById('v115NewBtn').onclick=async()=>{v115DisposeCurrent();selectedPartId=null;if(typeof multiSelectedIds!=='undefined')multiSelectedIds.clear();$('empty').style.display='grid';renderLayerList();refreshUi();syncTransformFields();await v115ClearSaved();setStatus('Nova sessão iniciada.','ok');};
   document.getElementById('v115PivotCenter').onclick=()=>v115SetPivotPreset('center');document.getElementById('v115PivotBase').onclick=()=>v115SetPivotPreset('base');document.getElementById('v115PivotTop').onclick=()=>v115SetPivotPreset('top');document.getElementById('v115PivotReset').onclick=v115ResetPivot;
-  document.getElementById('v115PivotCursor').onclick=()=>{v115MeasureMode=true;const old=v115PickPoint;setStatus('Pivô: toque/clique no ponto desejado da peça selecionada.','ok');const once=e=>{if(!v115SelectedSingle())return; e.preventDefault();e.stopImmediatePropagation();const rect=renderer.domElement.getBoundingClientRect();pointer.x=((e.clientX-rect.left)/rect.width)*2-1;pointer.y=-((e.clientY-rect.top)/rect.height)*2+1;raycaster.setFromCamera(pointer,camera);const p=v115SelectedSingle();const hit=raycaster.intersectObject(p.mesh,false)[0];if(hit){v115SetPivotWorld(hit.point,'toque/clique');renderer.domElement.removeEventListener('pointerdown',once,true);v115MeasureMode=false;}},true;renderer.domElement.addEventListener('pointerdown',once,true);};
+  document.getElementById('v115PivotCursor').onclick=()=>{
+    v115MeasureMode=true;
+    setStatus('Pivô: toque/clique no ponto desejado da peça selecionada.','ok');
+    const once=e=>{
+      if(!v115SelectedSingle())return;
+      e.preventDefault();e.stopImmediatePropagation();
+      const rect=renderer.domElement.getBoundingClientRect();
+      pointer.x=((e.clientX-rect.left)/rect.width)*2-1;
+      pointer.y=-((e.clientY-rect.top)/rect.height)*2+1;
+      raycaster.setFromCamera(pointer,camera);
+      const p=v115SelectedSingle();
+      const hit=raycaster.intersectObject(p.mesh,false)[0];
+      if(hit){
+        v115SetPivotWorld(hit.point,'toque/clique');
+        renderer.domElement.removeEventListener('pointerdown',once,true);
+        v115MeasureMode=false;
+      }
+    };
+    renderer.domElement.addEventListener('pointerdown',once,true);
+  };
   document.getElementById('v115MeasureBtn').onclick=v115ToggleMeasure;document.getElementById('v115MeasureClear').onclick=v115ClearMeasure;
 })();
 async function v115UpdateAutosaveLabel(){const l=document.getElementById('v115AutosaveLabel');if(!l)return;const x=await v115ReadSaved();l.textContent=x?.time?`Último autosave: ${new Date(x.time).toLocaleString()}`:'Nenhum autosave salvo ainda.';}
