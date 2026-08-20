@@ -1,0 +1,139 @@
+// V10.14 — BOOLEAN REAL (UNIÃO / SUBTRAÇÃO / INTERSEÇÃO)
+let v114CsgModule=null;
+let v114Busy=false;
+
+async function v114LoadCsg(){
+  if(v114CsgModule) return v114CsgModule;
+  setStatus('Carregando motor Boolean 3D...');
+  v114CsgModule=await import('https://esm.sh/three-bvh-csg@0.0.17?external=three');
+  return v114CsgModule;
+}
+
+function v114SelectedPair(){
+  const ids=(typeof multiSelectedIds!=='undefined'&&multiSelectedIds.size)?[...multiSelectedIds]:(selectedPartId?[selectedPartId]:[]);
+  const uniq=[...new Set(ids)].filter(id=>parts.some(p=>p.id===id));
+  if(uniq.length!==2) return null;
+  const aid=uniq.includes(selectedPartId)?selectedPartId:uniq[uniq.length-1];
+  const bid=uniq.find(id=>id!==aid);
+  const a=parts.find(p=>p.id===aid), b=parts.find(p=>p.id===bid);
+  if(!a||!b) return null;
+  return {a,b};
+}
+
+function v114CloneMaterial(mat){
+  if(Array.isArray(mat)) return mat[0]?.clone?.() || makeMaterial();
+  return mat?.clone?.() || makeMaterial();
+}
+
+function v114WorldGeometry(part){
+  part.mesh.updateMatrixWorld(true);
+  let g=part.mesh.geometry.clone();
+  if(g.index && g.toNonIndexed) g=g.toNonIndexed();
+  g.applyMatrix4(part.mesh.matrixWorld);
+  g.computeVertexNormals();
+  g.computeBoundingBox();
+  g.computeBoundingSphere();
+  return g;
+}
+
+function v114RecordUndo(label){
+  if(typeof captureFullSceneSnapshot!=='function' || typeof originalEditorPushUndoV109!=='function') return;
+  const action={label,beforeSnapshot:captureFullSceneSnapshot(),undo(){}};
+  if(typeof editorRedoStack!=='undefined') editorRedoStack.length=0;
+  originalEditorPushUndoV109(action);
+  if(typeof logHistoryV109==='function') logHistoryV109(label,'do');
+}
+
+function v114SetOriginalVisibility(pair,visible){
+  [pair.a,pair.b].forEach(p=>{p.visible=visible;p.mesh.visible=visible;});
+}
+
+async function v114Boolean(opName){
+  if(v114Busy) return;
+  const pair=v114SelectedPair();
+  if(!pair){ setStatus('Boolean precisa de exatamente 2 objetos selecionados. O objeto ativo é a peça A.','warn'); return; }
+  if(pair.a.locked||pair.b.locked){ setStatus('Desbloqueie as duas peças antes do Boolean.','warn'); return; }
+  if(!pair.a.visible||!pair.b.visible){ setStatus('As duas peças precisam estar visíveis para o Boolean.','warn'); return; }
+
+  v114Busy=true;
+  const buttons=['v114Union','v114Subtract','v114Intersect']; buttons.forEach(id=>{const b=document.getElementById(id);if(b)b.disabled=true;});
+  try{
+    setStatus(`Calculando Boolean: ${opName}...`);
+    const CSG=await v114LoadCsg();
+    const {Brush,Evaluator,ADDITION,SUBTRACTION,INTERSECTION}=CSG;
+    if(!Brush||!Evaluator) throw new Error('Motor CSG incompatível.');
+
+    const ga=v114WorldGeometry(pair.a), gb=v114WorldGeometry(pair.b);
+    if(!ga.attributes?.position?.count||!gb.attributes?.position?.count) throw new Error('Uma das peças não possui geometria válida.');
+
+    const brushA=new Brush(ga,v114CloneMaterial(pair.a.mesh.material));
+    const brushB=new Brush(gb,v114CloneMaterial(pair.b.mesh.material));
+    brushA.updateMatrixWorld(true); brushB.updateMatrixWorld(true);
+    const evaluator=new Evaluator();
+    evaluator.useGroups=false;
+    evaluator.consolidateGroups=true;
+    const operation=opName==='uniao'?ADDITION:opName==='subtracao'?SUBTRACTION:INTERSECTION;
+    const result=evaluator.evaluate(brushA,brushB,operation);
+    const rg=result?.geometry?.clone?.();
+    if(!rg?.attributes?.position?.count) throw new Error('A operação produziu uma malha vazia. Verifique se as peças se cruzam.');
+
+    rg.computeVertexNormals(); rg.computeBoundingBox(); rg.computeBoundingSphere();
+    const label=opName==='uniao'?'União':opName==='subtracao'?'Subtração':'Interseção';
+    v114RecordUndo(`Boolean: ${label.toLowerCase()}`);
+
+    const cam={pos:camera.position.clone(),quat:camera.quaternion.clone(),up:camera.up.clone(),target:controls.target.clone()};
+    const out=createPartFromGeometry(rg,`${label}: ${pair.a.name} + ${pair.b.name}`,'boolean');
+    try{out.mesh.material.dispose?.();}catch(_){}
+    out.mesh.material=v114CloneMaterial(pair.a.mesh.material);
+    out.mesh.position.set(0,0,0); out.mesh.quaternion.identity(); out.mesh.scale.set(1,1,1);
+    out.mesh.userData.baseGeometry=out.mesh.geometry.clone();
+    out.mesh.userData.baseMask=new Float32Array(out.mesh.geometry.attributes.position.count);
+
+    const keep=document.getElementById('v114KeepOriginals')?.checked;
+    if(!keep) v114SetOriginalVisibility(pair,false);
+
+    if(typeof multiSelectedIds!=='undefined'){multiSelectedIds.clear();multiSelectedIds.add(out.id);} selectedPartId=out.id;
+    camera.position.copy(cam.pos);camera.quaternion.copy(cam.quat);camera.up.copy(cam.up);controls.target.copy(cam.target);controls.update();
+    renderLayerList();refreshUi();syncTransformFields();
+    if(typeof refreshSelectionHelpers==='function')refreshSelectionHelpers();
+    if(typeof v111RefreshGizmo==='function')v111RefreshGizmo();
+    if(typeof v113UpdateMeasureUi==='function')v113UpdateMeasureUi();
+    setStatus(`${label} concluída. Resultado criado como nova camada${keep?' mantendo':' ocultando'} as originais.`,'ok');
+  }catch(err){
+    console.error('Boolean V10.14:',err);
+    setStatus('Falha no Boolean: '+(err?.message||err),'error');
+  }finally{
+    v114Busy=false; buttons.forEach(id=>{const b=document.getElementById(id);if(b)b.disabled=false;});
+  }
+}
+
+(function v114InstallUi(){
+  if(document.getElementById('v114BooleanSection')) return;
+  const sidebar=document.querySelector('.sidebar'); if(!sidebar) return;
+  const section=document.createElement('div'); section.className='section'; section.id='v114BooleanSection';
+  section.innerHTML=`<div class="section-title">BOOLEAN 3D REAL</div>
+    <div class="row3"><button id="v114Union" class="primary">Unir</button><button id="v114Subtract" class="danger">Subtrair</button><button id="v114Intersect" class="secondary">Interseção</button></div>
+    <label class="toggleRow" style="margin-top:8px;display:flex;align-items:center;gap:8px"><input id="v114KeepOriginals" type="checkbox"><span>Manter originais visíveis</span></label>
+    <div class="hintlabel">Selecione exatamente 2 peças. A camada ativa é A. Subtrair faz A − B. Por padrão as originais ficam ocultas, não apagadas.</div>`;
+  const meshTitle=[...document.querySelectorAll('.section-title')].find(x=>x.textContent.includes('SIMETRIA / MALHA'));
+  if(meshTitle?.parentElement) meshTitle.parentElement.before(section); else sidebar.appendChild(section);
+  document.getElementById('v114Union').onclick=()=>v114Boolean('uniao');
+  document.getElementById('v114Subtract').onclick=()=>v114Boolean('subtracao');
+  document.getElementById('v114Intersect').onclick=()=>v114Boolean('intersecao');
+})();
+
+(function v114InstallMobile(){
+  const panel=document.getElementById('v112MobilePanel'); if(!panel) return;
+  const style=document.createElement('style');
+  style.textContent=`#v114MobileBool{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-top:6px}#v114MobileBool button{min-height:44px}`;
+  document.head.appendChild(style);
+  const row=document.createElement('div'); row.id='v114MobileBool';
+  row.innerHTML='<button class="primary" id="v114MUnion">UNIR</button><button class="danger" id="v114MSub">A−B</button><button class="secondary" id="v114MInt">INTER</button>';
+  panel.appendChild(row);
+  document.getElementById('v114MUnion').onclick=()=>v114Boolean('uniao');
+  document.getElementById('v114MSub').onclick=()=>v114Boolean('subtracao');
+  document.getElementById('v114MInt').onclick=()=>v114Boolean('intersecao');
+})();
+
+const v114Brand=document.querySelector('.brand small'); if(v114Brand)v114Brand.textContent='V10.14 • Boolean real';
+document.title='COREL 3D GLB Studio V10.14 — Boolean Real';
