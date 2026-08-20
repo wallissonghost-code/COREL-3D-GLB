@@ -1,0 +1,227 @@
+// V10.16 — HAND 3D / CONTROLE POR GESTOS COM CÂMERA
+let v116HandEnabled=false;
+let v116HandMode='translate';
+let v116Hands=null;
+let v116Stream=null;
+let v116Video=null;
+let v116Canvas=null;
+let v116Ctx=null;
+let v116Cursor=null;
+let v116Processing=false;
+let v116LastSend=0;
+let v116Pinching=false;
+let v116GestureStart=null;
+let v116LastSeen=0;
+const V116_PINCH_ON=0.055;
+const V116_PINCH_OFF=0.075;
+
+function v116LoadScript(src){
+  return new Promise((resolve,reject)=>{
+    const existing=[...document.scripts].find(s=>s.src===src); if(existing){resolve();return;}
+    const s=document.createElement('script'); s.src=src; s.crossOrigin='anonymous'; s.onload=resolve; s.onerror=reject; document.head.appendChild(s);
+  });
+}
+
+function v116Selection(){
+  if(typeof v111SelectedParts==='function') return v111SelectedParts().filter(p=>p.visible&&!p.locked);
+  const ids=(typeof multiSelectedIds!=='undefined'&&multiSelectedIds.size)?[...multiSelectedIds]:(selectedPartId?[selectedPartId]:[]);
+  return ids.map(id=>parts.find(p=>p.id===id)).filter(p=>p&&p.visible&&!p.locked);
+}
+
+function v116SetMode(mode){
+  v116HandMode=mode;
+  document.querySelectorAll('#v116HandSection [data-handmode],#v116HandCard [data-handmode]').forEach(b=>b.classList.toggle('active',b.dataset.handmode===mode));
+  setStatus(`Hand 3D: ${mode==='translate'?'mover':mode==='rotate'?'girar':'escalar'} com a pinça.`,'ok');
+}
+
+function v116NdcFromTip(tip){
+  const x=1-tip.x, y=tip.y;
+  return new THREE.Vector2(x*2-1,1-y*2);
+}
+
+function v116RayFromTip(tip){
+  const ndc=v116NdcFromTip(tip); raycaster.setFromCamera(ndc,camera); return ndc;
+}
+
+function v116SelectAtTip(tip){
+  v116RayFromTip(tip);
+  const candidates=parts.filter(p=>p.visible&&!p.locked&&p.mesh.visible).map(p=>p.mesh);
+  const hit=raycaster.intersectObjects(candidates,false)[0];
+  if(!hit) return null;
+  const part=parts.find(p=>p.mesh===hit.object); if(!part) return null;
+  if(typeof setSingleSelectionNoCamera==='function') setSingleSelectionNoCamera(part.id); else selectPart(part.id);
+  if(typeof v111RefreshGizmo==='function') v111RefreshGizmo();
+  return part;
+}
+
+function v116Center(sel){ const box=new THREE.Box3(); sel.forEach(p=>box.expandByObject(p.mesh)); return box.getCenter(new THREE.Vector3()); }
+
+function v116PlanePoint(tip,plane,target=new THREE.Vector3()){
+  v116RayFromTip(tip); return raycaster.ray.intersectPlane(plane,target);
+}
+
+function v116BeginGesture(tip,thumb){
+  let sel=v116Selection(); if(!sel.length){v116SelectAtTip(tip);sel=v116Selection();}
+  else { const hit=v116SelectAtTip(tip); if(hit) sel=v116Selection(); }
+  if(!sel.length){setStatus('Hand 3D: faça a pinça sobre uma peça para agarrar.','warn');return false;}
+  if(typeof captureTransformUndo==='function'&&typeof editorPushUndo==='function'){
+    const a=captureTransformUndo('movimento Hand 3D'); if(a) editorPushUndo(a);
+  }
+  const center=v116Center(sel);
+  const camDir=new THREE.Vector3(); camera.getWorldDirection(camDir).normalize();
+  const plane=new THREE.Plane().setFromNormalAndCoplanarPoint(camDir,center);
+  const point=v116PlanePoint(tip,plane,new THREE.Vector3()) || center.clone();
+  const pinchDist=Math.hypot(tip.x-thumb.x,tip.y-thumb.y,tip.z-thumb.z);
+  v116GestureStart={
+    center,plane,point,startX:1-tip.x,startY:tip.y,pinchDist,
+    items:sel.map(p=>({p,pos:p.mesh.position.clone(),quat:p.mesh.quaternion.clone(),scale:p.mesh.scale.clone()}))
+  };
+  controls.enabled=false; v116Pinching=true; return true;
+}
+
+function v116ApplyGesture(tip,thumb){
+  const s=v116GestureStart; if(!s) return;
+  const x=1-tip.x,y=tip.y;
+  if(v116HandMode==='translate'){
+    const now=v116PlanePoint(tip,s.plane,new THREE.Vector3()); if(!now)return;
+    const delta=now.clone().sub(s.point);
+    s.items.forEach(it=>{it.p.mesh.position.copy(it.pos).add(delta);it.p.mesh.updateMatrixWorld(true);});
+  }else if(v116HandMode==='rotate'){
+    const dx=(x-s.startX)*Math.PI*2.2, dy=(y-s.startY)*Math.PI*1.7;
+    const qY=new THREE.Quaternion().setFromAxisAngle(camera.up.clone().normalize(),dx);
+    const right=new THREE.Vector3(1,0,0).applyQuaternion(camera.quaternion).normalize();
+    const qX=new THREE.Quaternion().setFromAxisAngle(right,dy);
+    const dq=qY.multiply(qX);
+    s.items.forEach(it=>{
+      const rel=it.pos.clone().sub(s.center).applyQuaternion(dq);
+      it.p.mesh.position.copy(s.center).add(rel);
+      it.p.mesh.quaternion.copy(dq).multiply(it.quat);
+      it.p.mesh.updateMatrixWorld(true);
+    });
+  }else{
+    const scale=Math.max(.15,Math.min(6,Math.exp((s.startY-y)*3.2)));
+    s.items.forEach(it=>{
+      const rel=it.pos.clone().sub(s.center).multiplyScalar(scale);
+      it.p.mesh.position.copy(s.center).add(rel);
+      it.p.mesh.scale.copy(it.scale).multiplyScalar(scale);
+      it.p.mesh.updateMatrixWorld(true);
+    });
+  }
+  syncTransformFields();
+  if(typeof refreshSelectionHelpers==='function') refreshSelectionHelpers();
+  if(typeof v111RefreshGizmo==='function') v111RefreshGizmo();
+  if(typeof v113UpdateMeasure==='function') v113UpdateMeasure();
+}
+
+function v116EndGesture(){
+  if(!v116Pinching)return;
+  v116Pinching=false; v116GestureStart=null;
+  controls.enabled=!sculptEnabled;
+  if(typeof v113SmartSnap!=='undefined'&&v113SmartSnap&&typeof v113ApplySmartSnap==='function') setTimeout(()=>v113ApplySmartSnap('Hand 3D'),0);
+}
+
+function v116DrawHand(lm){
+  if(!v116Ctx||!v116Canvas)return;
+  const w=v116Canvas.width,h=v116Canvas.height; v116Ctx.clearRect(0,0,w,h);
+  const links=[[0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],[5,9],[9,10],[10,11],[11,12],[9,13],[13,14],[14,15],[15,16],[13,17],[17,18],[18,19],[19,20],[0,17]];
+  v116Ctx.lineWidth=3; v116Ctx.strokeStyle='rgba(90,220,255,.9)';
+  links.forEach(([a,b])=>{const A=lm[a],B=lm[b];v116Ctx.beginPath();v116Ctx.moveTo((1-A.x)*w,A.y*h);v116Ctx.lineTo((1-B.x)*w,B.y*h);v116Ctx.stroke();});
+  lm.forEach((p,i)=>{v116Ctx.beginPath();v116Ctx.fillStyle=(i===4||i===8)?'#fff36a':'#78e6ff';v116Ctx.arc((1-p.x)*w,p.y*h,(i===4||i===8)?6:4,0,Math.PI*2);v116Ctx.fill();});
+}
+
+function v116UpdateCursor(tip,pinch){
+  if(!v116Cursor)return;
+  const rect=renderer.domElement.getBoundingClientRect();
+  const x=(1-tip.x)*rect.width,y=tip.y*rect.height;
+  v116Cursor.style.display='block'; v116Cursor.style.transform=`translate(${x-12}px,${y-12}px)`;
+  v116Cursor.classList.toggle('pinch',pinch);
+}
+
+function v116OnResults(results){
+  if(!v116HandEnabled)return;
+  const lm=results.multiHandLandmarks?.[0];
+  if(!lm){v116DrawHand([]);if(v116Cursor)v116Cursor.style.display='none';if(Date.now()-v116LastSeen>300)v116EndGesture();return;}
+  v116LastSeen=Date.now(); v116DrawHand(lm);
+  const thumb=lm[4],tip=lm[8];
+  const d=Math.hypot(tip.x-thumb.x,tip.y-thumb.y,tip.z-thumb.z);
+  const pinching=v116Pinching?d<V116_PINCH_OFF:d<V116_PINCH_ON;
+  v116UpdateCursor(tip,pinching);
+  if(pinching&&!v116Pinching) v116BeginGesture(tip,thumb);
+  if(pinching&&v116Pinching) v116ApplyGesture(tip,thumb);
+  if(!pinching&&v116Pinching) v116EndGesture();
+  const state=document.getElementById('v116HandState'); if(state) state.textContent=pinching?'✊ PINÇA / PEÇA AGARRADA':'✋ mão detectada — una indicador + polegar';
+}
+
+async function v116Loop(t){
+  if(!v116HandEnabled)return;
+  requestAnimationFrame(v116Loop);
+  if(v116Processing||!v116Video||v116Video.readyState<2||t-v116LastSend<34)return;
+  v116LastSend=t; v116Processing=true;
+  try{await v116Hands.send({image:v116Video});}catch(err){console.warn('Hand 3D frame:',err);}finally{v116Processing=false;}
+}
+
+async function v116Start(){
+  if(v116HandEnabled)return;
+  if(!navigator.mediaDevices?.getUserMedia){setStatus('Este navegador não oferece acesso à câmera para Hand 3D.','error');return;}
+  try{
+    setStatus('Hand 3D: carregando detector de mãos...');
+    const base='https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/';
+    await v116LoadScript(base+'hands.js');
+    if(!window.Hands) throw new Error('MediaPipe Hands não carregou');
+    v116Hands=new window.Hands({locateFile:file=>base+file});
+    v116Hands.setOptions({maxNumHands:1,modelComplexity:1,minDetectionConfidence:.65,minTrackingConfidence:.6});
+    v116Hands.onResults(v116OnResults);
+    v116Stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'user',width:{ideal:640},height:{ideal:480}},audio:false});
+    v116Video.srcObject=v116Stream; await v116Video.play();
+    v116HandEnabled=true; document.getElementById('v116HandCard').style.display='block';
+    const b=document.getElementById('v116Toggle'); if(b){b.textContent='Desativar Hand 3D';b.classList.add('active');}
+    requestAnimationFrame(v116Loop);
+    setStatus('Hand 3D ativo. Faça pinça com indicador + polegar sobre uma peça.','ok');
+  }catch(err){
+    console.error('Hand 3D:',err); v116Stop();
+    setStatus('Hand 3D não iniciou. Autorize a câmera e tente novamente.','error');
+  }
+}
+
+function v116Stop(){
+  v116HandEnabled=false; v116EndGesture();
+  try{v116Stream?.getTracks?.().forEach(t=>t.stop());}catch(_){} v116Stream=null;
+  if(v116Video) v116Video.srcObject=null;
+  if(v116Cursor)v116Cursor.style.display='none';
+  const card=document.getElementById('v116HandCard'); if(card)card.style.display='none';
+  const b=document.getElementById('v116Toggle'); if(b){b.textContent='Ativar câmera / Hand 3D';b.classList.remove('active');}
+  setStatus('Hand 3D desativado.','ok');
+}
+
+(function v116Install(){
+  if(document.getElementById('v116HandSection'))return;
+  const style=document.createElement('style'); style.textContent=`
+  #v116HandSection .active,#v116HandCard .active{outline:2px solid rgba(100,230,255,.85);background:#173244}
+  #v116HandCard{display:none;position:absolute;left:12px;bottom:12px;z-index:86;width:min(44vw,320px);overflow:hidden;border-radius:16px;border:1px solid rgba(255,255,255,.18);background:rgba(7,10,15,.9);box-shadow:0 10px 35px rgba(0,0,0,.42)}
+  #v116HandPreview{position:relative;aspect-ratio:4/3;background:#05070b;overflow:hidden}
+  #v116HandVideo,#v116HandCanvas{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;transform:scaleX(-1)}
+  #v116HandCanvas{transform:none;pointer-events:none}
+  #v116HandState{padding:7px 9px;font-size:11px;font-weight:700;text-align:center}
+  #v116HandCard .modes{display:grid;grid-template-columns:repeat(3,1fr);gap:5px;padding:0 7px 7px}
+  #v116HandCursor{display:none;position:absolute;left:0;top:0;z-index:84;width:24px;height:24px;border:3px solid #7eeaff;border-radius:50%;pointer-events:none;box-shadow:0 0 14px rgba(100,230,255,.8)}
+  #v116HandCursor.pinch{width:18px;height:18px;border-color:#fff36a;background:rgba(255,243,106,.25)}
+  @media(max-width:620px){#v116HandCard{left:7px;bottom:215px;width:180px}#v116HandState{font-size:9px}#v116HandCard button{font-size:10px;min-height:36px}}
+  `;document.head.appendChild(style);
+  const sidebar=document.querySelector('.sidebar'); const section=document.createElement('div');section.className='section';section.id='v116HandSection';
+  section.innerHTML=`<div class="section-title">HAND 3D — CÂMERA + DEDOS</div>
+    <button id="v116Toggle" class="primary">Ativar câmera / Hand 3D</button>
+    <div class="row3" style="margin-top:7px"><button class="secondary active" data-handmode="translate">Mover</button><button class="secondary" data-handmode="rotate">Girar</button><button class="secondary" data-handmode="scale">Escalar</button></div>
+    <div class="hintlabel">Pinça = indicador + polegar. Aponte para a peça, faça a pinça e mova a mão. Detecção roda localmente no navegador.</div>`;
+  const gizmo=document.getElementById('v111TransformSection'); if(gizmo)gizmo.before(section);else sidebar.prepend(section);
+  document.getElementById('v116Toggle').onclick=()=>v116HandEnabled?v116Stop():v116Start();
+  section.querySelectorAll('[data-handmode]').forEach(b=>b.onclick=()=>v116SetMode(b.dataset.handmode));
+
+  const card=document.createElement('div');card.id='v116HandCard';card.innerHTML=`<div id="v116HandPreview"><video id="v116HandVideo" playsinline muted></video><canvas id="v116HandCanvas" width="640" height="480"></canvas></div><div id="v116HandState">procurando mão...</div><div class="modes"><button class="secondary active" data-handmode="translate">Mover</button><button class="secondary" data-handmode="rotate">Girar</button><button class="secondary" data-handmode="scale">Escalar</button></div>`;
+  stage.appendChild(card); card.querySelectorAll('[data-handmode]').forEach(b=>b.onclick=()=>v116SetMode(b.dataset.handmode));
+  v116Video=document.getElementById('v116HandVideo');v116Canvas=document.getElementById('v116HandCanvas');v116Ctx=v116Canvas.getContext('2d');
+  v116Cursor=document.createElement('div');v116Cursor.id='v116HandCursor';stage.appendChild(v116Cursor);
+})();
+
+addEventListener('pagehide',()=>{try{v116Stream?.getTracks?.().forEach(t=>t.stop())}catch(_){}});
+const v116Brand=document.querySelector('.brand small');if(v116Brand)v116Brand.textContent='V10.16 • Hand 3D / câmera + dedos';
+document.title='COREL 3D GLB Studio V10.16 — Hand 3D';
