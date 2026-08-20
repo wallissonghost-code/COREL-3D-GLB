@@ -25,12 +25,13 @@ const files = [
   'app-v112-mobile-controls.txt',
   'app-v113-align-smartsnap-measure.txt',
   'app-v114-boolean.txt',
-  'app-v115-autosave-pivot-pointmeasure.txt'
+  'app-v115-autosave-pivot-pointmeasure.txt',
+  'app-v116-hand3d.txt'
 ];
 
 try {
   const code = (await Promise.all(files.map(async name => {
-    const url = new URL(`${name}?v=119`, import.meta.url);
+    const url = new URL(`${name}?v=120`, import.meta.url);
     const response = await fetch(url, { cache: 'no-store' });
     if (!response.ok) throw new Error(`Falha ao carregar ${url.pathname}: HTTP ${response.status}`);
     return await response.text();
