@@ -1,0 +1,187 @@
+// V10.19 — SVG PRO / EXTRUSÃO EDITÁVEL
+let v119LastSvgFileName='';
+
+function v119Num(id,fallback){
+  const el=document.getElementById(id); const n=+(el?.value ?? fallback);
+  return Number.isFinite(n)?n:fallback;
+}
+
+function v119PathColor(path){
+  try{
+    if(path?.color?.isColor) return '#'+path.color.getHexString();
+    const fill=path?.userData?.style?.fill;
+    if(fill && fill!=='none' && fill!=='transparent'){
+      const c=new THREE.Color(fill); return '#'+c.getHexString();
+    }
+  }catch(_){}
+  return null;
+}
+
+function v119ExtrudeOptions(){
+  const depth=Math.max(.01,v119Num('v119Depth',.22));
+  const bevel=document.getElementById('v119Bevel')?.checked!==false;
+  const bevelSize=Math.max(0,Math.min(depth*.45,v119Num('v119BevelSize',.025)));
+  const bevelThickness=Math.max(0,Math.min(depth*.45,v119Num('v119BevelThickness',.025)));
+  const curveSegments=Math.max(2,Math.min(32,Math.round(v119Num('v119CurveSegments',12))));
+  const bevelSegments=Math.max(1,Math.min(8,Math.round(v119Num('v119BevelSegments',3))));
+  return {depth,curveSegments,bevelEnabled:bevel&&bevelSize>0&&bevelThickness>0,bevelSize,bevelThickness,bevelSegments,steps:1};
+}
+
+function v119CollectSvgGeometries(data){
+  const options=v119ExtrudeOptions();
+  const out=[];
+  data.paths.forEach((path,pathIndex)=>{
+    const shapes=SVGLoader.createShapes(path);
+    const color=v119PathColor(path);
+    shapes.forEach((shape,shapeIndex)=>{
+      const g=new THREE.ExtrudeGeometry(shape,options);
+      g.rotateX(Math.PI);
+      g.computeVertexNormals();
+      out.push({geometry:g.toNonIndexed(),color,pathIndex,shapeIndex});
+    });
+  });
+  return out;
+}
+
+function v119CommonCenter(items){
+  const box=new THREE.Box3();
+  items.forEach(item=>{
+    item.geometry.computeBoundingBox();
+    if(item.geometry.boundingBox) box.union(item.geometry.boundingBox);
+  });
+  return box.isEmpty()?new THREE.Vector3():box.getCenter(new THREE.Vector3());
+}
+
+function v119ApplyPartColor(part,color){
+  if(!part||!color)return;
+  try{
+    const mats=Array.isArray(part.mesh.material)?part.mesh.material:[part.mesh.material];
+    mats.forEach(m=>{ if(m?.color){m.color.set(color);m.needsUpdate=true;} });
+  }catch(_){}
+}
+
+function v119SelectCreated(created){
+  if(!created.length)return;
+  selectedPartId=created[created.length-1].id;
+  if(typeof multiSelectedIds!=='undefined'){
+    multiSelectedIds.clear();
+    created.forEach(p=>multiSelectedIds.add(p.id));
+  }
+  renderLayerList(); refreshUi(); syncTransformFields();
+  if(typeof refreshSelectionHelpers==='function') refreshSelectionHelpers();
+  if(typeof v111RefreshGizmo==='function') v111RefreshGizmo();
+  fitCameraToSelection();
+}
+
+async function v119ImportSvgPro(file){
+  if(!file)return;
+  setStatus('SVG PRO: lendo vetores e criando extrusão...');
+  try{
+    const text=await file.text();
+    const data=new SVGLoader().parse(text);
+    const items=v119CollectSvgGeometries(data);
+    if(!items.length) throw new Error('Nenhuma forma preenchida encontrada no SVG.');
+    const center=v119CommonCenter(items);
+    items.forEach(item=>item.geometry.translate(-center.x,-center.y,-center.z));
+
+    const separate=document.getElementById('v119Separate')?.checked===true;
+    const preserve=document.getElementById('v119PreserveColors')?.checked===true;
+    const base=file.name.replace(/\.svg$/i,'')||'SVG';
+    const created=[];
+
+    if(separate){
+      items.forEach((item,i)=>{
+        const part=createPartFromGeometry(item.geometry,`${base} • forma ${i+1}`,'svg-pro');
+        part.mesh.userData.svgPro={sourceName:file.name,formIndex:i,settings:v119ExtrudeOptions()};
+        if(preserve && item.color) v119ApplyPartColor(part,item.color);
+        created.push(part);
+      });
+    }else{
+      const merged=mergeGeometries(items.map(x=>x.geometry),false);
+      if(!merged) throw new Error('Não foi possível unir as formas do SVG.');
+      const part=createPartFromGeometry(merged,`${base} • SVG PRO`,'svg-pro');
+      part.mesh.userData.svgPro={sourceName:file.name,merged:true,settings:v119ExtrudeOptions()};
+      created.push(part);
+    }
+
+    v119LastSvgFileName=file.name;
+    v119SelectCreated(created);
+    const info=document.getElementById('v119LastInfo');
+    if(info) info.textContent=`${file.name} • ${items.length} forma${items.length===1?'':'s'} • ${v119ExtrudeOptions().depth.toFixed(2)} profundidade`;
+    setStatus(`SVG PRO criado: ${created.length} camada${created.length===1?'':'s'} editável${created.length===1?'':'is'}.`, 'ok');
+  }catch(err){
+    console.error('SVG PRO:',err);
+    setStatus('SVG PRO falhou: '+(err?.message||err),'error');
+  }
+}
+
+function v119UpdateUi(){
+  const depth=v119Num('v119Depth',.22);
+  const size=Math.min(depth*.45,v119Num('v119BevelSize',.025));
+  const thick=Math.min(depth*.45,v119Num('v119BevelThickness',.025));
+  const d=document.getElementById('v119DepthV'); if(d)d.textContent=depth.toFixed(2);
+  const s=document.getElementById('v119BevelSizeV'); if(s)s.textContent=size.toFixed(3);
+  const t=document.getElementById('v119BevelThicknessV'); if(t)t.textContent=thick.toFixed(3);
+  const c=document.getElementById('v119CurveV'); if(c)c.textContent=String(Math.round(v119Num('v119CurveSegments',12)));
+  const b=document.getElementById('v119BevelSegmentsV'); if(b)b.textContent=String(Math.round(v119Num('v119BevelSegments',3)));
+  const separate=document.getElementById('v119Separate')?.checked===true;
+  const preserve=document.getElementById('v119PreserveColors'); if(preserve)preserve.disabled=!separate;
+}
+
+function v119Preset(kind){
+  const set=(id,v)=>{const e=document.getElementById(id);if(e)e.value=v;};
+  const check=(id,v)=>{const e=document.getElementById(id);if(e)e.checked=v;};
+  if(kind==='logo'){set('v119Depth',.18);set('v119BevelSize',.018);set('v119BevelThickness',.018);set('v119CurveSegments',14);set('v119BevelSegments',3);check('v119Bevel',true);}
+  if(kind==='placa'){set('v119Depth',.35);set('v119BevelSize',.035);set('v119BevelThickness',.03);set('v119CurveSegments',12);set('v119BevelSegments',3);check('v119Bevel',true);}
+  if(kind==='reto'){set('v119Depth',.22);set('v119BevelSize',0);set('v119BevelThickness',0);set('v119CurveSegments',10);set('v119BevelSegments',1);check('v119Bevel',false);}
+  v119UpdateUi();
+  setStatus(`SVG PRO: preset ${kind==='logo'?'Logo':kind==='placa'?'Placa':'Reto'} aplicado.`,'ok');
+}
+
+(function v119Install(){
+  if(document.getElementById('v119SvgProSection'))return;
+  const importTitle=[...document.querySelectorAll('.section-title')].find(el=>el.textContent.includes('IMPORTAR / CRIAR'));
+  const anchor=importTitle?.parentElement;
+  if(!anchor)return;
+
+  const section=document.createElement('div');
+  section.className='section';
+  section.id='v119SvgProSection';
+  section.innerHTML=`
+    <div class="section-title">SVG PRO — EXTRUSÃO 3D</div>
+    <div class="row3">
+      <button id="v119PresetLogo" class="secondary">Logo</button>
+      <button id="v119PresetPlaca" class="secondary">Placa</button>
+      <button id="v119PresetReto" class="secondary">Reto</button>
+    </div>
+    <div class="field" style="margin-top:10px"><label>Profundidade <span id="v119DepthV" class="value">0.22</span></label><input id="v119Depth" type="range" min="0.02" max="1.20" value="0.22" step="0.01"></div>
+    <div class="toggleRow"><label style="display:flex;gap:7px;align-items:center"><input id="v119Bevel" type="checkbox" checked> Bevel / borda arredondada</label></div>
+    <div class="field"><label>Tamanho do bevel <span id="v119BevelSizeV" class="value">0.025</span></label><input id="v119BevelSize" type="range" min="0" max="0.20" value="0.025" step="0.005"></div>
+    <div class="field"><label>Profundidade do bevel <span id="v119BevelThicknessV" class="value">0.025</span></label><input id="v119BevelThickness" type="range" min="0" max="0.20" value="0.025" step="0.005"></div>
+    <div class="row">
+      <div class="field" style="margin:0"><label>Curvas <span id="v119CurveV" class="value">12</span></label><input id="v119CurveSegments" type="range" min="2" max="24" value="12" step="1"></div>
+      <div class="field" style="margin:0"><label>Suavidade bevel <span id="v119BevelSegmentsV" class="value">3</span></label><input id="v119BevelSegments" type="range" min="1" max="6" value="3" step="1"></div>
+    </div>
+    <div class="toggleRow" style="margin-top:9px;display:grid;gap:7px">
+      <label style="display:flex;gap:7px;align-items:center"><input id="v119Separate" type="checkbox"> Separar cada forma em camada</label>
+      <label style="display:flex;gap:7px;align-items:center"><input id="v119PreserveColors" type="checkbox" disabled> Preservar cores do SVG</label>
+    </div>
+    <button id="v119ImportBtn" class="primary" style="margin-top:10px;width:100%">Importar SVG PRO</button>
+    <input id="v119SvgInput" type="file" accept=".svg,image/svg+xml">
+    <div id="v119LastInfo" class="hintlabel" style="margin-top:8px">Aguardando SVG. O importador antigo continua disponível acima.</div>
+    <div class="hintlabel">Ideal para logos do Corel: converta textos em curvas antes de exportar SVG. Separar formas mantém cada parte editável e pode preservar as cores.</div>`;
+  anchor.after(section);
+
+  const input=document.getElementById('v119SvgInput');
+  document.getElementById('v119ImportBtn').onclick=()=>{input.value='';input.click();};
+  input.onchange=async e=>{const file=e.target.files?.[0];if(file)await v119ImportSvgPro(file);input.value='';};
+  document.getElementById('v119PresetLogo').onclick=()=>v119Preset('logo');
+  document.getElementById('v119PresetPlaca').onclick=()=>v119Preset('placa');
+  document.getElementById('v119PresetReto').onclick=()=>v119Preset('reto');
+  ['v119Depth','v119BevelSize','v119BevelThickness','v119CurveSegments','v119BevelSegments','v119Separate','v119Bevel'].forEach(id=>document.getElementById(id)?.addEventListener('input',v119UpdateUi));
+  v119UpdateUi();
+})();
+
+const v119Brand=document.querySelector('.brand small');
+if(v119Brand)v119Brand.textContent='V10.19 • SVG PRO + Hand 3D imersivo';
+document.title='COREL 3D GLB Studio V10.19 — SVG PRO';

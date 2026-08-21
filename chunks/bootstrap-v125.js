@@ -28,7 +28,8 @@ const files = [
   'app-v115-autosave-pivot-pointmeasure.txt',
   'app-v116-hand3d.txt',
   'app-v117-hand3d-stability.txt',
-  'app-v118-hand3d-immersive.txt'
+  'app-v118-hand3d-immersive.txt',
+  'app-v119-svg-pro.txt'
 ];
 
 try {
