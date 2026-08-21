@@ -27,7 +27,8 @@ const files = [
   'app-v114-boolean.txt',
   'app-v115-autosave-pivot-pointmeasure.txt',
   'app-v116-hand3d.txt',
-  'app-v117-hand3d-stability.txt'
+  'app-v117-hand3d-stability.txt',
+  'app-v118-hand3d-immersive.txt'
 ];
 
 try {
