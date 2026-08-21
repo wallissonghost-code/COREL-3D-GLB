@@ -1,0 +1,149 @@
+// V10.18 — HAND 3D MODO IMERSIVO / FOCO MOBILE
+let v118Immersive=false;
+let v118ControlsVisible=true;
+
+function v118SyncModeButtons(){
+  document.querySelectorAll('#v118ImmersiveBar [data-handmode]').forEach(btn=>{
+    btn.classList.toggle('active',btn.dataset.handmode===v116HandMode);
+  });
+}
+
+function v118SyncControlsVisibility(){
+  document.body.classList.toggle('v118-hand-controls-hidden',!v118ControlsVisible);
+  const toggle=document.getElementById('v118ToggleControls');
+  if(toggle) toggle.textContent=v118ControlsVisible?'Ocultar controles':'Mostrar controles';
+}
+
+function v118EnterImmersive(){
+  if(v118Immersive)return;
+  v118Immersive=true;
+  v118ControlsVisible=true;
+  document.body.classList.add('v118-hand-immersive');
+  v118SyncModeButtons();
+  v118SyncControlsVisibility();
+  try{renderer?.setSize?.(stage.clientWidth,stage.clientHeight,false);}catch(_){}
+  setStatus('Hand 3D em modo imersivo. Use a pinça para controlar a peça.','ok');
+}
+
+function v118ExitImmersive(){
+  if(!v118Immersive)return;
+  v118Immersive=false;
+  v118ControlsVisible=true;
+  document.body.classList.remove('v118-hand-immersive','v118-hand-controls-hidden');
+  try{renderer?.setSize?.(stage.clientWidth,stage.clientHeight,false);}catch(_){}
+}
+
+(function v118Install(){
+  if(document.getElementById('v118ImmersiveBar'))return;
+
+  const style=document.createElement('style');
+  style.textContent=`
+    body.v118-hand-immersive{overflow:hidden;background:#03060a}
+    body.v118-hand-immersive .app{display:block!important;width:100vw!important;height:100dvh!important;min-height:100dvh!important;overflow:hidden!important}
+    body.v118-hand-immersive .sidebar{display:none!important}
+    body.v118-hand-immersive .stage{position:fixed!important;inset:0!important;width:100vw!important;height:100dvh!important;min-height:100dvh!important;border:0!important;border-radius:0!important;margin:0!important;background:#03060a!important;overflow:hidden!important}
+    body.v118-hand-immersive .stage>.toolbar,
+    body.v118-hand-immersive .stage>.hint,
+    body.v118-hand-immersive .stage>#empty{display:none!important}
+    body.v118-hand-immersive #v116HandCard{display:block!important;left:10px!important;top:10px!important;bottom:auto!important;width:min(42vw,230px)!important;max-height:46dvh!important;border-radius:14px!important;z-index:110!important;background:rgba(6,10,16,.88)!important;backdrop-filter:blur(10px)}
+    body.v118-hand-immersive #v116HandPreview{aspect-ratio:4/3!important}
+    body.v118-hand-immersive #v116HandCard .modes{display:none!important}
+    body.v118-hand-immersive #v116HandState{font-size:10px!important;padding:6px 7px!important}
+    body.v118-hand-immersive #v116HandCursor{z-index:115!important}
+    #v118ImmersiveBar{display:none;position:fixed;left:50%;bottom:max(12px,env(safe-area-inset-bottom));transform:translateX(-50%);z-index:120;width:min(94vw,720px);padding:8px;border:1px solid rgba(255,255,255,.18);border-radius:18px;background:rgba(7,11,18,.88);box-shadow:0 14px 44px rgba(0,0,0,.45);backdrop-filter:blur(14px)}
+    body.v118-hand-immersive #v118ImmersiveBar{display:block}
+    #v118ImmersiveBar .v118-top{display:grid;grid-template-columns:auto 1fr auto;gap:7px;align-items:center}
+    #v118ImmersiveBar .v118-modes{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
+    #v118ImmersiveBar .v118-extra{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-top:6px}
+    #v118ImmersiveBar button{min-height:42px;touch-action:manipulation}
+    #v118ImmersiveBar [data-handmode].active{outline:2px solid rgba(100,230,255,.9);background:#173244}
+    #v118Exit{white-space:nowrap;background:#5b1d26;border-color:#8e3440;color:#fff}
+    body.v118-hand-controls-hidden #v118ImmersiveBar .v118-modes,
+    body.v118-hand-controls-hidden #v118ImmersiveBar .v118-extra{display:none!important}
+    body.v118-hand-controls-hidden #v118ImmersiveBar{width:auto;left:auto;right:10px;transform:none}
+    body.v118-hand-controls-hidden #v118ImmersiveBar .v118-top{grid-template-columns:auto auto}
+    body.v118-hand-controls-hidden #v118ImmersiveTitle{display:none}
+    @media(max-width:620px){
+      body.v118-hand-immersive #v116HandCard{left:8px!important;top:max(8px,env(safe-area-inset-top))!important;width:168px!important;max-height:220px!important}
+      #v118ImmersiveBar{width:calc(100vw - 14px);bottom:max(7px,env(safe-area-inset-bottom));padding:7px;border-radius:15px}
+      #v118ImmersiveBar .v118-top{grid-template-columns:auto 1fr auto;gap:5px}
+      #v118ImmersiveBar .v118-modes,#v118ImmersiveBar .v118-extra{gap:5px}
+      #v118ImmersiveBar button{font-size:11px;min-height:39px;padding:6px}
+      #v118ImmersiveTitle{font-size:10px;text-align:center;opacity:.75;font-weight:700}
+    }
+  `;
+  document.head.appendChild(style);
+
+  const bar=document.createElement('div');
+  bar.id='v118ImmersiveBar';
+  bar.innerHTML=`
+    <div class="v118-top">
+      <button id="v118Exit" class="danger">✕ Sair</button>
+      <div id="v118ImmersiveTitle">HAND 3D • MODO IMERSIVO</div>
+      <button id="v118ToggleControls" class="ghost">Ocultar controles</button>
+    </div>
+    <div class="v118-modes" style="margin-top:6px">
+      <button class="secondary active" data-handmode="translate">Mover</button>
+      <button class="secondary" data-handmode="rotate">Girar</button>
+      <button class="secondary" data-handmode="scale">Escalar</button>
+    </div>
+    <div class="v118-extra">
+      <button id="v118Undo" class="secondary">↶ Desfazer</button>
+      <button id="v118Redo" class="secondary">↷ Refazer</button>
+      <button id="v118HideCamera" class="secondary">Ocultar câmera</button>
+    </div>`;
+  document.body.appendChild(bar);
+
+  bar.querySelectorAll('[data-handmode]').forEach(btn=>btn.onclick=()=>{
+    v116SetMode(btn.dataset.handmode);
+    v118SyncModeButtons();
+  });
+  document.getElementById('v118Undo').onclick=()=>typeof performEditorUndo==='function'&&performEditorUndo();
+  document.getElementById('v118Redo').onclick=()=>typeof performEditorRedo==='function'&&performEditorRedo();
+  document.getElementById('v118ToggleControls').onclick=()=>{
+    v118ControlsVisible=!v118ControlsVisible;
+    v118SyncControlsVisibility();
+  };
+  document.getElementById('v118HideCamera').onclick=()=>{
+    const card=document.getElementById('v116HandCard'); if(!card)return;
+    const hidden=card.dataset.previewHidden==='1';
+    card.dataset.previewHidden=hidden?'0':'1';
+    card.style.visibility=hidden?'visible':'hidden';
+    document.getElementById('v118HideCamera').textContent=hidden?'Ocultar câmera':'Mostrar câmera';
+  };
+  document.getElementById('v118Exit').onclick=()=>{
+    if(typeof v116Stop==='function')v116Stop(); else v118ExitImmersive();
+  };
+
+  const originalSetMode=v116SetMode;
+  v116SetMode=function(mode){ const r=originalSetMode(mode); v118SyncModeButtons(); return r; };
+
+  const originalStart=v116Start;
+  v116Start=async function(){
+    const r=await originalStart();
+    if(v116HandEnabled)v118EnterImmersive();
+    return r;
+  };
+
+  const originalStop=v116Stop;
+  v116Stop=function(){
+    v118ExitImmersive();
+    const card=document.getElementById('v116HandCard');
+    if(card){card.style.visibility='';delete card.dataset.previewHidden;}
+    const camBtn=document.getElementById('v118HideCamera');if(camBtn)camBtn.textContent='Ocultar câmera';
+    return originalStop();
+  };
+
+  addEventListener('keydown',e=>{
+    if(e.key==='Escape'&&v118Immersive){e.preventDefault();v116Stop();}
+  },true);
+
+  addEventListener('resize',()=>{
+    if(!v118Immersive)return;
+    try{renderer?.setSize?.(stage.clientWidth,stage.clientHeight,false);}catch(_){}
+  });
+})();
+
+const v118Brand=document.querySelector('.brand small');
+if(v118Brand)v118Brand.textContent='V10.18 • Hand 3D imersivo mobile';
+document.title='COREL 3D GLB Studio V10.18 — Hand 3D Imersivo';
